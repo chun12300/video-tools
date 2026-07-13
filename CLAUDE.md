@@ -18,6 +18,7 @@
 - `index.html` — 單頁介面(三步驟說明、拖放區、預覽/剪輯/設定、進度、結果)
 - `style.css` — 深色主題樣式,響應式(以桌面為主)
 - `app.js` — 全部邏輯:檔案選擇、剪輯區間、ffmpeg.wasm 載入與轉換、進度、下載
+- `.github/workflows/pages.yml` — 推送到 `main` 時自動啟用並部署 GitHub Pages
 
 ## 技術要點(踩過的坑,勿隨意更動)
 
