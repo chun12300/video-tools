@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>影片轉 GIF — 影片小工具箱</title>
+  <meta name="description" content="在瀏覽器裡把影片轉成 GIF,檔案不會上傳到任何伺服器。">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖼️</text></svg>">
+</head>
+<body>
+  <header class="site-header">
+    <p class="back-link"><a href="index.html">← 回工具選單</a></p>
+    <h1>🖼️ 影片轉 GIF</h1>
+    <p class="tagline">把影片片段變成 GIF 動圖 — 全部在你的瀏覽器完成,<strong>檔案不會離開你的電腦</strong>。</p>
+    <p class="desktop-hint">💻 建議使用電腦操作</p>
+  </header>
+
+  <main>
+    <!-- 步驟 1:選擇檔案 -->
+    <section class="card" id="pick-card">
+      <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="選擇或拖放影片檔">
+        <div class="drop-icon" aria-hidden="true">📂</div>
+        <p class="drop-title">把影片拖到這裡,或點擊選擇檔案</p>
+        <p class="drop-hint">支援 MP4、MOV、WebM</p>
+        <input type="file" id="file-input" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" hidden>
+      </div>
+      <p id="file-error" class="error-msg" hidden></p>
+    </section>
+
+    <!-- 步驟 2:預覽與設定 -->
+    <section class="card workspace" id="workspace" hidden>
+      <div class="file-info">
+        <span id="file-name"></span>
+        <button type="button" id="change-file-btn" class="btn btn-ghost">換一個影片</button>
+      </div>
+
+      <video id="video-preview" controls playsinline></video>
+
+      <fieldset class="trim">
+        <legend>剪輯片段</legend>
+        <div class="trim-row">
+          <label for="start-range">開始時間</label>
+          <input type="range" id="start-range" min="0" max="0" step="0.1" value="0">
+          <input type="number" id="start-input" min="0" step="0.1" value="0"> 秒
+          <button type="button" class="btn btn-small" id="start-now-btn" title="把開始時間設為影片目前播放的位置">取目前位置</button>
+        </div>
+        <div class="trim-row">
+          <label for="end-range">結束時間</label>
+          <input type="range" id="end-range" min="0" max="0" step="0.1" value="0">
+          <input type="number" id="end-input" min="0" step="0.1" value="0"> 秒
+          <button type="button" class="btn btn-small" id="end-now-btn" title="把結束時間設為影片目前播放的位置">取目前位置</button>
+        </div>
+        <p class="trim-summary">片段長度:<strong id="clip-length">0</strong> 秒
+          <button type="button" class="btn btn-small" id="play-clip-btn">▶ 播放此片段</button>
+        </p>
+        <p id="length-warning" class="warn-msg" hidden></p>
+      </fieldset>
+
+      <fieldset class="options">
+        <legend>GIF 設定</legend>
+        <div class="option-group" role="radiogroup" aria-label="GIF 尺寸">
+          <span class="option-label">尺寸</span>
+          <label class="chip"><input type="radio" name="size" value="240"><span>小(寬 240px)</span></label>
+          <label class="chip"><input type="radio" name="size" value="360" checked><span>中(寬 360px)</span></label>
+          <label class="chip"><input type="radio" name="size" value="480"><span>大(寬 480px)</span></label>
+        </div>
+        <div class="option-group" role="radiogroup" aria-label="幀率">
+          <span class="option-label">幀率</span>
+          <label class="chip"><input type="radio" name="fps" value="8"><span>8 fps(檔案較小)</span></label>
+          <label class="chip"><input type="radio" name="fps" value="12" checked><span>12 fps(建議)</span></label>
+          <label class="chip"><input type="radio" name="fps" value="15"><span>15 fps</span></label>
+          <label class="chip"><input type="radio" name="fps" value="24"><span>24 fps(較流暢)</span></label>
+        </div>
+      </fieldset>
+
+      <button type="button" id="convert-btn" class="btn btn-primary">🚀 開始轉換</button>
+
+      <!-- 進度 -->
+      <div id="progress-area" class="progress-area" hidden>
+        <p id="progress-text">準備中…</p>
+        <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+        <button type="button" id="cancel-btn" class="btn btn-ghost">取消</button>
+      </div>
+      <p id="convert-error" class="error-msg" hidden></p>
+    </section>
+
+    <!-- 步驟 3:結果 -->
+    <section class="card" id="result-card" hidden>
+      <h2 class="result-title">✅ 轉換完成!</h2>
+      <img id="gif-preview" alt="轉換完成的 GIF 預覽">
+      <p class="result-meta">檔案大小:<strong id="gif-size"></strong></p>
+      <p id="size-warning" class="warn-msg" hidden></p>
+      <div class="result-actions">
+        <a id="download-btn" class="btn btn-primary" download="output.gif">⬇ 下載 GIF</a>
+        <button type="button" id="again-btn" class="btn btn-ghost">調整設定再轉一次</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>🔒 隱私優先:所有轉換都透過 <a href="https://ffmpegwasm.netlify.app/" target="_blank" rel="noopener">ffmpeg.wasm</a> 在你的瀏覽器裡完成,影片不會上傳到任何伺服器。</p>
+  </footer>
+
+  <script src="ffmpeg-loader.js"></script>
+  <script src="gif.js"></script>
+</body>
+</html>

@@ -57,6 +57,74 @@ a { color: var(--accent); }
 
 .tagline strong { color: var(--ok); }
 
+.desktop-hint {
+  display: inline-block;
+  margin: 12px 0 0;
+  padding: 4px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  background: var(--bg-card);
+}
+
+.back-link {
+  margin: 0 0 4px;
+  font-size: 0.9rem;
+}
+
+.back-link a {
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.back-link a:hover { color: var(--accent); }
+
+/* ---- 工具選單 ---- */
+.tool-menu {
+  display: flex;
+  gap: 16px;
+  margin: 28px 0;
+}
+
+.tool-card {
+  flex: 1;
+  display: block;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  text-align: center;
+  text-decoration: none;
+  color: var(--text);
+  transition: border-color 0.15s, transform 0.15s, background-color 0.15s;
+}
+
+.tool-card:hover {
+  border-color: var(--accent);
+  background: rgba(91, 140, 255, 0.06);
+  transform: translateY(-2px);
+}
+
+.tool-icon { font-size: 2.6rem; }
+
+.tool-card h2 {
+  margin: 12px 0 8px;
+  font-size: 1.2rem;
+}
+
+.tool-card p {
+  margin: 0 0 16px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.tool-go {
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 /* ---- 三步驟說明 ---- */
 .steps {
   display: flex;
@@ -316,6 +384,134 @@ legend {
   color: var(--text-dim);
 }
 
+/* ---- 影片清單(合併剪輯) ---- */
+.list-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.list-total {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.list-total strong { color: var(--text); }
+
+.list-hint {
+  margin: 8px 0 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.video-list {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.video-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.video-item.selected { border-color: var(--accent); }
+
+.video-item.dragging { opacity: 0.4; }
+
+.video-item.drop-target {
+  border-color: var(--accent);
+  background: rgba(91, 140, 255, 0.1);
+}
+
+.drag-handle {
+  cursor: grab;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.item-index {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.item-name {
+  font-size: 0.92rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-meta {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.item-actions .btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+#editor-video,
+#result-video {
+  width: 100%;
+  max-height: 380px;
+  border-radius: 8px;
+  background: #000;
+}
+
+.merge-summary {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-dim);
+}
+
+.merge-summary strong { color: var(--text); }
+
+.merge-hint {
+  margin: 8px 0 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
 /* ---- 進度 ---- */
 .progress-area {
   margin-top: 20px;
@@ -409,4 +605,8 @@ legend {
   .step-arrow { transform: rotate(90deg); }
   .trim-row label { width: 100%; }
   .option-label { width: 100%; }
+  .tool-menu { flex-direction: column; }
+  .video-item { flex-wrap: wrap; }
+  .item-info { min-width: 60%; }
+  .item-actions { width: 100%; justify-content: flex-end; }
 }

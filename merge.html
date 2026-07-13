@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>影片合併剪輯 — 影片小工具箱</title>
+  <meta name="description" content="在瀏覽器裡剪輯並合併多支影片,檔案不會上傳到任何伺服器。">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎞️</text></svg>">
+</head>
+<body>
+  <header class="site-header">
+    <p class="back-link"><a href="index.html">← 回工具選單</a></p>
+    <h1>🎞️ 影片合併剪輯</h1>
+    <p class="tagline">多支影片各剪一段、照順序合併成一支 MP4 — 全部在你的瀏覽器完成,<strong>檔案不會離開你的電腦</strong>。</p>
+    <p class="desktop-hint">💻 建議使用電腦操作</p>
+  </header>
+
+  <main>
+    <!-- 選擇檔案 -->
+    <section class="card">
+      <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="選擇或拖放多個影片檔">
+        <div class="drop-icon" aria-hidden="true">📂</div>
+        <p class="drop-title">把影片拖到這裡,或點擊選擇檔案(可一次選多個)</p>
+        <p class="drop-hint">支援 MP4、MOV、WebM</p>
+        <input type="file" id="file-input" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" multiple hidden>
+      </div>
+      <p id="file-error" class="error-msg" hidden></p>
+    </section>
+
+    <!-- 影片清單 -->
+    <section class="card" id="list-card" hidden>
+      <div class="list-header">
+        <h2 class="section-title">影片清單(依此順序合併)</h2>
+        <p class="list-total">總檔案大小:<strong id="total-size">0</strong></p>
+      </div>
+      <p class="list-hint">拖曳 ⠿ 或使用 ↑↓ 調整順序;點「✂ 剪輯」設定每支影片要保留的片段。</p>
+      <p id="total-warning" class="warn-msg" hidden></p>
+      <ul id="video-list" class="video-list"></ul>
+      <button type="button" id="add-more-btn" class="btn btn-ghost">＋ 再加入影片</button>
+    </section>
+
+    <!-- 剪輯編輯器 -->
+    <section class="card" id="editor-card" hidden>
+      <div class="file-info">
+        <span>✂ 剪輯:<strong id="editor-name"></strong></span>
+        <button type="button" id="editor-close-btn" class="btn btn-ghost">完成</button>
+      </div>
+
+      <video id="editor-video" controls playsinline></video>
+
+      <fieldset class="trim">
+        <legend>保留的片段</legend>
+        <div class="trim-row">
+          <label for="start-range">開始時間</label>
+          <input type="range" id="start-range" min="0" max="0" step="0.1" value="0">
+          <input type="number" id="start-input" min="0" step="0.1" value="0"> 秒
+          <button type="button" class="btn btn-small" id="start-now-btn" title="把開始時間設為影片目前播放的位置">取目前位置</button>
+        </div>
+        <div class="trim-row">
+          <label for="end-range">結束時間</label>
+          <input type="range" id="end-range" min="0" max="0" step="0.1" value="0">
+          <input type="number" id="end-input" min="0" step="0.1" value="0"> 秒
+          <button type="button" class="btn btn-small" id="end-now-btn" title="把結束時間設為影片目前播放的位置">取目前位置</button>
+        </div>
+        <p class="trim-summary">保留長度:<strong id="clip-length">0</strong> 秒
+          <button type="button" class="btn btn-small" id="play-clip-btn">▶ 播放此片段</button>
+        </p>
+      </fieldset>
+    </section>
+
+    <!-- 合併 -->
+    <section class="card" id="merge-card" hidden>
+      <p class="merge-summary">共 <strong id="merge-count">0</strong> 支影片,合併後總長約 <strong id="merge-length">0</strong> 秒</p>
+      <p class="merge-hint">💡 影片會逐支重新編碼後合併,速度較慢,長片請耐心等候。</p>
+      <button type="button" id="merge-btn" class="btn btn-primary">🚀 合併輸出 MP4</button>
+
+      <div id="progress-area" class="progress-area" hidden>
+        <p id="progress-text">準備中…</p>
+        <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+        <button type="button" id="cancel-btn" class="btn btn-ghost">取消</button>
+      </div>
+      <p id="merge-error" class="error-msg" hidden></p>
+    </section>
+
+    <!-- 結果 -->
+    <section class="card" id="result-card" hidden>
+      <h2 class="result-title">✅ 合併完成!</h2>
+      <video id="result-video" controls playsinline></video>
+      <p class="result-meta">檔案大小:<strong id="result-size"></strong></p>
+      <div class="result-actions">
+        <a id="download-btn" class="btn btn-primary" download="merged.mp4">⬇ 下載 MP4</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>🔒 隱私優先:所有轉換都透過 <a href="https://ffmpegwasm.netlify.app/" target="_blank" rel="noopener">ffmpeg.wasm</a> 在你的瀏覽器裡完成,影片不會上傳到任何伺服器。</p>
+  </footer>
+
+  <script src="ffmpeg-loader.js"></script>
+  <script src="merge.js"></script>
+</body>
+</html>
