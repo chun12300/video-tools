@@ -24,7 +24,9 @@
 - `gif.html` / `gif.js` — 影片轉 GIF(單檔、剪輯、尺寸/幀率、輸出 GIF)
 - `ffmpeg-loader.js` — 共用的 ffmpeg.wasm CDN 載入模組(`window.FFmpegLoader`)
 - `style.css` — 深色主題樣式,響應式(以桌面為主)
-- `.github/workflows/pages.yml` — 推送到 `main` 時自動部署 GitHub Pages(首次仍需管理員在 Settings → Pages 把 Source 設為 GitHub Actions)
+
+部署:GitHub Pages 以「Deploy from a branch」(`main` + root)方式部署,
+推送到 `main` 即自動重新部署,不需要 workflow。
 
 ## 技術要點(踩過的坑,勿隨意更動)
 

@@ -34,13 +34,10 @@
 
 ## 部署到 GitHub Pages
 
-這是純靜態網站,不需要任何建置步驟。儲存庫已內建部署 workflow
-(`.github/workflows/pages.yml`):推送到 `main` 分支時會**自動啟用並部署
-GitHub Pages**,完成後網站出現在 `https://<帳號>.github.io/<儲存庫名>/`。
-部署進度可在儲存庫的 **Actions** 頁籤查看。
-
-> 首次啟用需要 repo 管理員到 **Settings → Pages** 把 **Source** 設為
-> 「GitHub Actions」(僅此一次)。
+這是純靜態網站,不需要任何建置步驟。到儲存庫的 **Settings → Pages**,
+**Source** 選「Deploy from a branch」、Branch 選 `main` + `/ (root)`(僅需設定一次)。
+之後每次推送到 `main` 都會自動重新部署,網站在
+`https://<帳號>.github.io/<儲存庫名>/`,部署進度可在 **Actions** 頁籤查看。
 
 ## 本機開發
 
