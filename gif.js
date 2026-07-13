@@ -1,23 +1,12 @@
-/* ===== 影片轉 GIF 小工具 =====
- * 所有轉換皆透過 ffmpeg.wasm 在瀏覽器內完成,檔案不會上傳到任何伺服器。
- * 採用單執行緒版 @ffmpeg/core:GitHub Pages 無法設定 COOP/COEP 標頭,
- * 因此不能使用需要 SharedArrayBuffer 的多執行緒版本。
- */
+/* ===== 影片轉 GIF ===== */
 (() => {
   "use strict";
-
-  // ---- CDN 設定(jsdelivr 為主,unpkg 備援) ----
-  const FFMPEG_VER = "0.12.10";
-  const UTIL_VER = "0.12.1";
-  const CORE_VER = "0.12.6";
-  const CDN_BASES = [
-    "https://cdn.jsdelivr.net/npm",
-    "https://unpkg.com",
-  ];
 
   const MAX_INPUT_MB = 500;      // 輸入檔案大小上限(wasm 記憶體限制)
   const LONG_CLIP_SEC = 15;      // 超過此長度提醒使用者剪短
   const BIG_GIF_MB = 10;         // 產出超過此大小給予提示
+
+  const { createLoadedFFmpeg, formatSize } = window.FFmpegLoader;
 
   // ---- DOM ----
   const $ = (id) => document.getElementById(id);
@@ -58,75 +47,11 @@
   let converting = false;
   let cancelled = false;
   let clipStopTimer = null;
-  let ffmpeg = null;          // FFmpeg 實例(lazy 載入,可重複使用)
-  let ffmpegLibsPromise = null;
+  let ffmpeg = null; // 實例可重複使用;terminate 後設 null 重新載入
 
-  // ==========================================================
-  // ffmpeg.wasm 載入
-  // ==========================================================
-
-  function loadScript(src) {
-    return new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = src;
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error("無法載入 " + src));
-      document.head.appendChild(s);
-    });
-  }
-
-  // 依序嘗試各 CDN,直到成功為止
-  async function tryCDNs(fn) {
-    let lastErr = null;
-    for (const base of CDN_BASES) {
-      try {
-        return await fn(base);
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    throw lastErr || new Error("所有 CDN 均無法連線");
-  }
-
-  // 載入 @ffmpeg/ffmpeg 與 @ffmpeg/util 的 UMD script
-  function loadFFmpegLibs() {
-    if (!ffmpegLibsPromise) {
-      ffmpegLibsPromise = tryCDNs(async (base) => {
-        await loadScript(`${base}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/umd/ffmpeg.js`);
-        await loadScript(`${base}/@ffmpeg/util@${UTIL_VER}/dist/umd/index.js`);
-        if (!window.FFmpegWASM || !window.FFmpegUtil) {
-          throw new Error("ffmpeg.wasm 程式庫載入不完整");
-        }
-      }).catch((err) => {
-        ffmpegLibsPromise = null; // 失敗後允許重試
-        throw err;
-      });
-    }
-    return ffmpegLibsPromise;
-  }
-
-  // 建立並載入 FFmpeg 實例。
-  // GitHub Pages 與 CDN 不同源,Worker 無法直接用跨網域 URL 建立,
-  // 因此 worker / core / wasm 都先以 toBlobURL 轉成同源 blob URL。
   async function getFFmpeg(onStatus) {
     if (ffmpeg && ffmpeg.loaded) return ffmpeg;
-
-    onStatus("正在載入轉換引擎(首次使用約需下載 25 MB)…");
-    await loadFFmpegLibs();
-    const { FFmpeg } = window.FFmpegWASM;
-    const { toBlobURL } = window.FFmpegUtil;
-
-    ffmpeg = new FFmpeg();
-    await tryCDNs(async (base) => {
-      const ffmpegBase = `${base}/@ffmpeg/ffmpeg@${FFMPEG_VER}/dist/umd`;
-      // worker 以 module 模式載入 core,需用有 default export 的 ESM 版
-      const coreBase = `${base}/@ffmpeg/core@${CORE_VER}/dist/esm`;
-      await ffmpeg.load({
-        classWorkerURL: await toBlobURL(`${ffmpegBase}/814.ffmpeg.js`, "text/javascript"),
-        coreURL: await toBlobURL(`${coreBase}/ffmpeg-core.js`, "text/javascript"),
-        wasmURL: await toBlobURL(`${coreBase}/ffmpeg-core.wasm`, "application/wasm"),
-      });
-    });
+    ffmpeg = await createLoadedFFmpeg(onStatus);
     return ffmpeg;
   }
 
@@ -420,12 +345,6 @@
   // ==========================================================
   // 小工具
   // ==========================================================
-
-  function formatSize(bytes) {
-    if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MB";
-    if (bytes >= 1024) return (bytes / 1024).toFixed(0) + " KB";
-    return bytes + " B";
-  }
 
   function showError(el, msg) {
     el.textContent = msg;
