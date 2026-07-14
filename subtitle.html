@@ -35,7 +35,10 @@
         <button type="button" id="change-file-btn" class="btn btn-ghost">換一個影片</button>
       </div>
 
-      <video id="video-preview" controls playsinline></video>
+      <div class="video-wrap">
+        <video id="video-preview" controls playsinline></video>
+        <div id="caption-overlay" class="caption-overlay" hidden></div>
+      </div>
 
       <p class="merge-hint" id="model-notice">ℹ️ 首次使用需下載語音辨識模型(<strong>約 250 MB</strong>,Whisper small 量化版),
         只需下載一次,之後由瀏覽器快取。辨識全程在你的電腦上執行,速度取決於電腦效能,
@@ -57,7 +60,17 @@
         <h2 class="section-title">✏️ 字幕編輯</h2>
         <p class="list-total" id="autosave-note">已自動暫存</p>
       </div>
-      <p class="list-hint">點 ▶ 跳到該句播放;直接修改文字與起訖秒數;可合併、拆分、新增、刪除。</p>
+      <p class="list-hint">點 ▶ 跳到該句播放(上方播放器會即時顯示字幕);直接修改文字與起訖秒數;可合併、拆分、新增、刪除。</p>
+
+      <div class="offset-row">
+        <span class="offset-label">⏱ 字幕時間位移</span>
+        <button type="button" id="offset-minus" class="btn btn-small">−0.1 秒</button>
+        <input type="number" id="offset-input" step="0.1" value="0"> 秒
+        <button type="button" id="offset-plus" class="btn btn-small">＋0.1 秒</button>
+        <span class="offset-hint">字幕比聲音早請往「＋」(全部延後)、太晚請往「−」;
+          邊播放邊調,預覽字幕即時生效,匯出 SRT 與燒錄都會套用。</span>
+      </div>
+
       <p id="draft-note" class="warn-msg" hidden></p>
       <ol id="sub-list" class="sub-list"></ol>
       <button type="button" id="add-end-btn" class="btn btn-ghost">＋ 在結尾新增一句</button>
