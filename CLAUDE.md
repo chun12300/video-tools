@@ -9,6 +9,7 @@
 - **影片合併剪輯**(`merge.html` + `merge.js`):多支影片各剪一段、依順序合併輸出 MP4
 - **影片轉 GIF**(`gif.html` + `gif.js`):剪一段影片轉成 GIF
 - **語音辨識字幕**(`subtitle.html` + `subtitle.js`):Whisper 辨識 → 逐句編輯 → SRT / 燒進影片
+- **發佈準備包**(`publish.html` + `publish.js`):直式版本、封面截圖、SRT、文案提示詞
 
 ## 核心原則(修改程式時必須遵守)
 
@@ -24,6 +25,8 @@
 - `merge.html` / `merge.js` — 影片合併剪輯(多檔清單、拖曳排序、逐支剪輯、合併輸出 MP4)
 - `gif.html` / `gif.js` — 影片轉 GIF(單檔、剪輯、尺寸/幀率、輸出 GIF)
 - `subtitle.html` / `subtitle.js` — 語音辨識字幕(辨識、編輯、SRT、燒錄)
+- `publish.html` / `publish.js` — 發佈準備包(直式轉換、封面、SRT、文案提示詞;
+  不在首頁選單,從合併/字幕工具的完成畫面進入,亦可直接開頁選檔)
 - `ffmpeg-loader.js` — 共用的 ffmpeg.wasm CDN 載入模組(`window.FFmpegLoader`)
 - `style.css` — 深色主題樣式,響應式(以桌面為主)
 
@@ -89,6 +92,20 @@
   家族名「Noto Sans TC」。SRT 匯出下載加 BOM,燒錄用的不加。
 - 「合併 → 生成字幕」交接:merge.js 把結果 blob 放進 IndexedDB(`video-tools`
   資料庫的 `handoff` store),subtitle.html?from=merge 讀出後即刪。
+
+### 發佈準備包(publish.js)的設計
+
+- 交接:合併(key `publish`,只有 blob)與字幕工具(blob+segs+offset)都經
+  IndexedDB `handoff` store 帶入 publish.html?from=tool,讀出即刪;
+  直接開頁選檔時會用「檔名|大小」去 localStorage 撈字幕草稿補 segs。
+- 直式 9:16:目標 1080×1920,來源寬度不足時等比例縮小(取偶數)。
+  模糊背景 **用 boxblur=10:2,wasm core 沒有 gblur**;
+  filtergraph:`split → bg(scale increase+crop+boxblur)、fg(scale decrease)→ overlay`。
+- 封面用 canvas:隱藏 video seek 後 drawImage;直式封面用
+  `ctx.filter="blur(24px)"` 畫 cover-fill 背景再疊原比例前景,與直式影片一致;
+  無頭瀏覽器解不了 H.264 時縮圖會失敗,屬環境限制。
+- 文案提示詞:固定模板 + 帶時間戳的完整字幕,`navigator.clipboard` 失敗時
+  退回 textarea+execCommand。
 
 ## 測試
 

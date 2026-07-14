@@ -61,6 +61,7 @@
   const addEndBtn = $("add-end-btn");
   const srtBtn = $("srt-btn");
   const burnBtn = $("burn-btn");
+  const publishBtn = $("publish-btn");
   const burnProgressArea = $("burn-progress-area");
   const burnProgressText = $("burn-progress-text");
   const burnProgressBar = $("burn-progress-bar");
@@ -654,6 +655,30 @@
     srtBtn.href = srtURL;
     const base = currentFile ? currentFile.name.replace(/\.[^.]+$/, "") : "subtitles";
     srtBtn.download = base + ".srt";
+  });
+
+  // 帶著影片+字幕前往「發佈準備包」(IndexedDB 交接)
+  publishBtn.addEventListener("click", async () => {
+    if (!currentFile) return;
+    try {
+      const db = await idbOpen();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("handoff", "readwrite");
+        tx.objectStore("handoff").put({
+          blob: currentFile,
+          name: currentFile.name,
+          segs,
+          offset: timeOffset,
+          savedAt: Date.now(),
+        }, "publish");
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      location.href = "publish.html?from=tool";
+    } catch (err) {
+      console.error(err);
+      showError(asrError, "無法傳遞到發佈準備包,請直接前往該頁面選擇影片檔。");
+    }
   });
 
   // ==========================================================

@@ -75,6 +75,7 @@
   const resultSize = $("result-size");
   const downloadBtn = $("download-btn");
   const subtitleBtn = $("subtitle-btn");
+  const publishBtn = $("publish-btn");
 
   // ---- 狀態 ----
   let items = [];        // {id, file, url, duration, width, height, start, end, envelope}
@@ -915,8 +916,8 @@
     resultCard.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  // 把合併結果交接給「語音辨識字幕」工具(IndexedDB 傳遞 blob)
-  subtitleBtn.addEventListener("click", async () => {
+  // 把合併結果交接給其他工具(IndexedDB 傳遞 blob)
+  async function handoff(key, record, targetURL) {
     if (!resultBlob) return;
     try {
       const db = await new Promise((resolve, reject) => {
@@ -927,17 +928,21 @@
       });
       await new Promise((resolve, reject) => {
         const tx = db.transaction("handoff", "readwrite");
-        tx.objectStore("handoff").put(
-          { blob: resultBlob, name: "merged.mp4", savedAt: Date.now() }, "merged");
+        tx.objectStore("handoff").put({ ...record, savedAt: Date.now() }, key);
         tx.oncomplete = resolve;
         tx.onerror = () => reject(tx.error);
       });
-      location.href = "subtitle.html?from=merge";
+      location.href = targetURL;
     } catch (err) {
       console.error(err);
-      showError(mergeError, "無法傳遞影片到字幕工具,請先下載 MP4 再到字幕頁面選擇該檔案。");
+      showError(mergeError, "無法傳遞影片,請先下載 MP4 再到目標頁面選擇該檔案。");
     }
-  });
+  }
+
+  subtitleBtn.addEventListener("click", () =>
+    handoff("merged", { blob: resultBlob, name: "merged.mp4" }, "subtitle.html?from=merge"));
+  publishBtn.addEventListener("click", () =>
+    handoff("publish", { blob: resultBlob, name: "merged.mp4" }, "publish.html?from=tool"));
 
   function resetResult() {
     resultCard.hidden = true;
