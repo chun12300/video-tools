@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>發佈準備包 — 影片小工具箱</title>
+  <meta name="description" content="一鍵產出發佈到 YouTube / IG / Facebook 所需的影片版本、封面、字幕與文案素材,全部在瀏覽器完成。">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+</head>
+<body>
+  <header class="site-header">
+    <p class="back-link"><a href="index.html">← 回工具選單</a></p>
+    <h1>📦 發佈準備包</h1>
+    <p class="tagline">一鍵產出發佈到各平台所需的素材 — 全部在你的瀏覽器完成,<strong>檔案不會離開你的電腦</strong>。</p>
+    <p class="desktop-hint">💻 建議使用電腦操作</p>
+  </header>
+
+  <main>
+    <!-- 發佈流程說明 -->
+    <section class="card">
+      <h2 class="section-title">🚀 各平台要上傳什麼?</h2>
+      <div class="platform-guide">
+        <div class="platform">
+          <h3>▶️ YouTube</h3>
+          <p>橫式影片 + 封面(1280×720)+ SRT 字幕檔 + 標題與說明欄文案</p>
+        </div>
+        <div class="platform">
+          <h3>📸 Instagram Reels</h3>
+          <p>直式影片(9:16)+ 直式封面(1080×1920)+ 貼文文案與 hashtag</p>
+        </div>
+        <div class="platform">
+          <h3>👍 Facebook</h3>
+          <p>橫式或直式影片皆可 + 貼文文案(結尾帶互動提問)</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 選擇檔案(直接進入此頁時的備援) -->
+    <section class="card" id="pick-card">
+      <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="選擇或拖放影片檔">
+        <div class="drop-icon" aria-hidden="true">📂</div>
+        <p class="drop-title">把完成的影片拖到這裡,或點擊選擇檔案</p>
+        <p class="drop-hint">也可以從「影片合併剪輯」或「語音辨識字幕」的完成畫面一鍵帶入</p>
+        <input type="file" id="file-input" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" hidden>
+      </div>
+      <p id="file-error" class="error-msg" hidden></p>
+    </section>
+
+    <!-- 工作區 -->
+    <div id="workspace" hidden>
+
+      <!-- 區塊一:影片版本 -->
+      <section class="card">
+        <h2 class="section-title">🎬 影片版本</h2>
+        <div class="file-info">
+          <span id="file-name"></span>
+          <button type="button" id="change-file-btn" class="btn btn-ghost">換一個影片</button>
+        </div>
+        <video id="video-preview" controls playsinline></video>
+
+        <div class="version-row">
+          <div>
+            <h3 class="version-title">橫式原片</h3>
+            <p class="version-desc">維持原始比例,適用 YouTube / Facebook。</p>
+          </div>
+          <a id="landscape-btn" class="btn btn-primary btn-inline">⬇ 下載橫式</a>
+        </div>
+
+        <div class="version-row portrait-block">
+          <div>
+            <h3 class="version-title">直式版本(9:16)</h3>
+            <p class="version-desc">適用 IG Reels / YouTube Shorts。輸出 1080×1920(來源解析度不足時等比例縮小)。</p>
+            <div class="option-group" role="radiogroup" aria-label="直式處理方式">
+              <label class="chip"><input type="radio" name="portrait-mode" value="blur" checked><span>上下模糊背景(建議)</span></label>
+              <label class="chip"><input type="radio" name="portrait-mode" value="black"><span>純黑邊</span></label>
+              <label class="chip"><input type="radio" name="portrait-mode" value="crop"><span>裁切放大(裁掉左右)</span></label>
+            </div>
+            <p class="merge-hint">⏳ 直式轉換需要把整支影片重新編碼一次,速度較慢,請耐心等候。</p>
+          </div>
+          <button type="button" id="portrait-btn" class="btn btn-primary btn-inline">🔄 轉換直式版本</button>
+        </div>
+
+        <div id="portrait-progress" class="progress-area" hidden>
+          <p id="portrait-progress-text">準備中…</p>
+          <div class="progress-track"><div id="portrait-progress-bar" class="progress-bar"></div></div>
+          <button type="button" id="portrait-cancel-btn" class="btn btn-ghost">取消</button>
+        </div>
+        <p id="portrait-error" class="error-msg" hidden></p>
+
+        <div id="portrait-result" class="portrait-result" hidden>
+          <video id="portrait-video" controls playsinline></video>
+          <div class="result-actions">
+            <a id="portrait-download-btn" class="btn btn-primary">⬇ 下載直式版本</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- 區塊二:封面截圖 -->
+      <section class="card">
+        <h2 class="section-title">🖼️ 封面截圖</h2>
+        <p class="list-hint">從下方縮圖挑一張,或把上方播放器拖到想要的畫面按「擷取此畫面」。</p>
+        <div id="thumb-grid" class="thumb-grid"></div>
+        <div class="result-actions">
+          <button type="button" id="capture-btn" class="btn">📸 擷取播放器目前畫面</button>
+        </div>
+        <div id="cover-area" class="cover-area" hidden>
+          <img id="cover-preview" alt="封面預覽">
+          <div class="result-actions">
+            <button type="button" id="cover-yt-btn" class="btn btn-primary">⬇ 封面 1280×720(YouTube)</button>
+            <button type="button" id="cover-portrait-btn" class="btn btn-primary">⬇ 封面 1080×1920(直式)</button>
+          </div>
+        </div>
+        <p id="cover-error" class="error-msg" hidden></p>
+      </section>
+
+      <!-- 區塊三:字幕檔 -->
+      <section class="card">
+        <h2 class="section-title">💬 字幕檔</h2>
+        <p id="srt-hint" class="list-hint"></p>
+        <div class="result-actions">
+          <a id="srt-btn" class="btn btn-primary">⬇ 下載 SRT 字幕檔</a>
+        </div>
+      </section>
+
+      <!-- 區塊四:文案提示詞 -->
+      <section class="card">
+        <h2 class="section-title">✍️ 文案提示詞</h2>
+        <p id="copy-hint" class="list-hint">複製後貼到 Claude 或任何 AI 聊天工具即可生成標題、說明欄與各平台貼文文案。</p>
+        <div class="result-actions">
+          <button type="button" id="copy-prompt-btn" class="btn btn-primary">📋 複製文案提示詞</button>
+        </div>
+        <p id="copy-done" class="ok-msg" hidden>✅ 已複製到剪貼簿!</p>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <p>🔒 隱私優先:所有轉換都透過 <a href="https://ffmpegwasm.netlify.app/" target="_blank" rel="noopener">ffmpeg.wasm</a> 在你的瀏覽器裡完成,影片不會上傳到任何伺服器。</p>
+  </footer>
+
+  <script src="ffmpeg-loader.js"></script>
+  <script src="publish.js"></script>
+</body>
+</html>

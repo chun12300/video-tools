@@ -833,6 +833,134 @@ legend {
   margin: 12px 0 0;
 }
 
+/* ---- 發佈準備包 ---- */
+.platform-guide {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.platform {
+  flex: 1;
+  min-width: 180px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.platform h3 {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+}
+
+.platform p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.83rem;
+}
+
+.version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+  padding-top: 16px;
+  flex-wrap: wrap;
+}
+
+.version-row > div { flex: 1; min-width: 240px; }
+
+.version-title { margin: 0 0 4px; font-size: 1rem; }
+
+.version-desc {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.btn-inline {
+  width: auto;
+  margin-top: 0;
+  flex-shrink: 0;
+}
+
+.portrait-result {
+  margin-top: 16px;
+  text-align: center;
+}
+
+#portrait-video {
+  max-height: 420px;
+  max-width: 100%;
+  border-radius: 8px;
+  background: #000;
+}
+
+.thumb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.thumb-btn {
+  position: relative;
+  padding: 0;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #000;
+  line-height: 0;
+}
+
+.thumb-btn img { width: 100%; }
+
+.thumb-btn span {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.thumb-btn:hover { border-color: var(--accent); }
+
+.thumb-btn.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+
+.cover-area {
+  margin-top: 14px;
+  text-align: center;
+}
+
+#cover-preview {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+
+.ok-msg {
+  color: var(--ok);
+  font-size: 0.9rem;
+  margin: 10px 0 0;
+  text-align: center;
+}
+
+.btn-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 /* ---- 頁尾 ---- */
 .site-footer {
   text-align: center;
