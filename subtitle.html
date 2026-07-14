@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>語音辨識字幕 — 影片小工具箱</title>
+  <meta name="description" content="在瀏覽器裡用語音辨識為影片生成字幕、編輯校正、匯出 SRT 或燒進影片,檔案不會上傳到任何伺服器。">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>">
+</head>
+<body>
+  <header class="site-header">
+    <p class="back-link"><a href="index.html">← 回工具選單</a></p>
+    <h1>📝 語音辨識字幕</h1>
+    <p class="tagline">用 AI 語音辨識為影片生成字幕、逐句校正、匯出 SRT 或燒進影片 — 全部在你的瀏覽器完成,<strong>檔案不會離開你的電腦</strong>。</p>
+    <p class="desktop-hint">💻 此功能僅建議在電腦使用</p>
+  </header>
+
+  <main>
+    <!-- 選擇檔案 -->
+    <section class="card" id="pick-card">
+      <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-label="選擇或拖放影片檔">
+        <div class="drop-icon" aria-hidden="true">📂</div>
+        <p class="drop-title">把影片拖到這裡,或點擊選擇檔案</p>
+        <p class="drop-hint">支援 MP4、MOV、WebM;也可以從「影片合併剪輯」的結果直接帶過來</p>
+        <input type="file" id="file-input" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" hidden>
+      </div>
+      <p id="file-error" class="error-msg" hidden></p>
+    </section>
+
+    <!-- 辨識 -->
+    <section class="card" id="asr-card" hidden>
+      <div class="file-info">
+        <span id="file-name"></span>
+        <button type="button" id="change-file-btn" class="btn btn-ghost">換一個影片</button>
+      </div>
+
+      <video id="video-preview" controls playsinline></video>
+
+      <p class="merge-hint" id="model-notice">ℹ️ 首次使用需下載語音辨識模型(<strong>約 250 MB</strong>,Whisper small 量化版),
+        只需下載一次,之後由瀏覽器快取。辨識全程在你的電腦上執行,速度取決於電腦效能,
+        長片可能需要比影片本身更久的時間,建議先用短片試試。</p>
+
+      <button type="button" id="asr-btn" class="btn btn-primary">🎙️ 開始辨識(繁體中文)</button>
+
+      <div id="progress-area" class="progress-area" hidden>
+        <p id="progress-text">準備中…</p>
+        <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+        <button type="button" id="cancel-btn" class="btn btn-ghost">取消</button>
+      </div>
+      <p id="asr-error" class="error-msg" hidden></p>
+    </section>
+
+    <!-- 字幕編輯 -->
+    <section class="card" id="editor-card" hidden>
+      <div class="list-header">
+        <h2 class="section-title">✏️ 字幕編輯</h2>
+        <p class="list-total" id="autosave-note">已自動暫存</p>
+      </div>
+      <p class="list-hint">點 ▶ 跳到該句播放;直接修改文字與起訖秒數;可合併、拆分、新增、刪除。</p>
+      <p id="draft-note" class="warn-msg" hidden></p>
+      <ol id="sub-list" class="sub-list"></ol>
+      <button type="button" id="add-end-btn" class="btn btn-ghost">＋ 在結尾新增一句</button>
+
+      <div class="result-actions export-actions">
+        <a id="srt-btn" class="btn btn-primary" download="subtitles.srt">⬇ 匯出 SRT 字幕檔</a>
+        <button type="button" id="burn-btn" class="btn">🔥 字幕燒進影片(需再下載約 7 MB 字型)</button>
+      </div>
+
+      <div id="burn-progress-area" class="progress-area" hidden>
+        <p id="burn-progress-text">準備中…</p>
+        <div class="progress-track"><div id="burn-progress-bar" class="progress-bar"></div></div>
+        <button type="button" id="burn-cancel-btn" class="btn btn-ghost">取消</button>
+      </div>
+      <p id="burn-error" class="error-msg" hidden></p>
+    </section>
+
+    <!-- 燒錄結果 -->
+    <section class="card" id="result-card" hidden>
+      <h2 class="result-title">✅ 字幕已燒進影片!</h2>
+      <video id="result-video" controls playsinline></video>
+      <p class="result-meta">檔案大小:<strong id="result-size"></strong></p>
+      <div class="result-actions">
+        <a id="download-btn" class="btn btn-primary" download="subtitled.mp4">⬇ 下載 MP4</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>🔒 隱私優先:語音辨識(<a href="https://huggingface.co/Xenova/whisper-small" target="_blank" rel="noopener">Whisper</a>)與轉檔(<a href="https://ffmpegwasm.netlify.app/" target="_blank" rel="noopener">ffmpeg.wasm</a>)都在你的瀏覽器裡執行,影片不會上傳到任何伺服器。字幕字型使用 <a href="https://fonts.google.com/noto/specimen/Noto+Sans+TC" target="_blank" rel="noopener">Noto Sans TC</a>(SIL OFL 授權)。</p>
+  </footer>
+
+  <script src="ffmpeg-loader.js"></script>
+  <script src="subtitle.js"></script>
+</body>
+</html>

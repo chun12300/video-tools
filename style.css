@@ -83,12 +83,14 @@ a { color: var(--accent); }
 /* ---- 工具選單 ---- */
 .tool-menu {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   margin: 28px 0;
 }
 
 .tool-card {
   flex: 1;
+  min-width: 200px;
   display: block;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -636,6 +638,75 @@ legend {
 }
 
 .cut-stats strong { color: var(--text); }
+
+/* ---- 字幕編輯器 ---- */
+.sub-list {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.sub-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.sub-row.active { border-color: var(--accent); }
+
+.sub-play { flex-shrink: 0; }
+
+.sub-time {
+  width: 76px;
+  flex-shrink: 0;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 6px;
+  font-size: 0.85rem;
+}
+
+.sub-dash { color: var(--text-dim); }
+
+.sub-text {
+  flex: 1;
+  min-width: 120px;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 0.92rem;
+}
+
+.sub-text:focus,
+.sub-time:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sub-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.export-actions { margin-top: 16px; }
+
+@media (max-width: 560px) {
+  .sub-row { flex-wrap: wrap; }
+  .sub-text { width: 100%; order: 5; }
+}
 
 /* ---- 進度 ---- */
 .progress-area {
