@@ -27,6 +27,12 @@
   const DRAFT_KEY = "subtitle-draft-v1";
   const MAX_INPUT_MB = 500;
 
+  // Whisper 的段落起點常把語音前的靜音吸進來(字幕比聲音早出現),
+  // 生成時用音訊包絡把每句起點對齊到實際開口點:
+  const ONSET_MAX_AHEAD = 2.0; // 起點最多往後找幾秒的「開口點」
+  const ONSET_LEAD = 0.05;     // 對齊後仍提前一點點顯示,避免切到字頭
+  const OFFSET_STEP = 0.1;     // 位移微調按鈕的步進(秒)
+
   const { createLoadedFFmpeg, formatSize } = window.FFmpegLoader;
 
   // ---- DOM ----
@@ -44,6 +50,10 @@
   const progressBar = $("progress-bar");
   const cancelBtn = $("cancel-btn");
   const asrError = $("asr-error");
+  const captionOverlay = $("caption-overlay");
+  const offsetInput = $("offset-input");
+  const offsetMinus = $("offset-minus");
+  const offsetPlus = $("offset-plus");
   const editorCard = $("editor-card");
   const draftNote = $("draft-note");
   const autosaveNote = $("autosave-note");
@@ -64,7 +74,8 @@
   // ---- 狀態 ----
   let currentFile = null;
   let videoURL = null;
-  let segs = [];            // [{start, end, text}]
+  let segs = [];            // [{start, end, text}](未套位移的原始時間)
+  let timeOffset = 0;       // 字幕整體位移(秒),正=延後;預覽/匯出/燒錄都套用
   let busy = false;
   let cancelled = false;
   let transcriber = null;   // Whisper pipeline(載入後常駐)
@@ -101,6 +112,7 @@
 
     currentFile = file;
     segs = [];
+    setOffset(0);
     editorCard.hidden = true;
     resetResult();
     hideError(asrError);
@@ -115,6 +127,7 @@
     const draft = loadDraft();
     if (draft && draft.key === fileKey(file) && draft.segs.length) {
       segs = draft.segs;
+      setOffset(draft.offset || 0);
       renderEditor();
       draftNote.textContent =
         `📌 已還原上次的編輯進度(${draft.segs.length} 句,` +
@@ -242,6 +255,32 @@
     }
   }
 
+  // 產生 20ms 一格的音量包絡與自適應門檻(第 95 百分位 −25dB,夾在 −55~−35),
+  // 回傳「從時間 t 起、往後最多 maxAhead 秒內第一個有聲時間」的查詢函式
+  function makeOnsetFinder(mono) {
+    const hop = Math.round(0.02 * ASR_SR);
+    const n = Math.max(1, Math.ceil(mono.length / hop));
+    const db = new Float32Array(n);
+    for (let w = 0; w < n; w++) {
+      const s0 = w * hop;
+      const s1 = Math.min(mono.length, s0 + hop);
+      let sum = 0;
+      for (let i = s0; i < s1; i++) sum += mono[i] * mono[i];
+      db[w] = 20 * Math.log10(Math.sqrt(sum / Math.max(1, s1 - s0)) + 1e-8);
+    }
+    const sorted = Array.from(db).sort((a, b) => a - b);
+    const p95 = sorted[Math.floor((sorted.length - 1) * 0.95)];
+    const threshold = Math.min(-35, Math.max(-55, p95 - 25));
+    const hopSec = hop / ASR_SR;
+    return (t, maxAhead) => {
+      const wEnd = Math.min(n, Math.ceil((t + maxAhead) / hopSec));
+      for (let w = Math.max(0, Math.floor(t / hopSec)); w < wEnd; w++) {
+        if (db[w] >= threshold) return w * hopSec;
+      }
+      return null;
+    };
+  }
+
   // 解碼音軌成 16kHz 單聲道
   async function decodeAudio(file) {
     const buf = await file.arrayBuffer();
@@ -294,6 +333,7 @@
 
       // 3) 逐段辨識
       const { mono, duration } = decoded;
+      const findOnset = makeOnsetFinder(mono);
       const out = [];
       const sliceN = SLICE_SEC * ASR_SR;
       for (let off = 0; off < mono.length; off += sliceN) {
@@ -325,9 +365,16 @@
           if (e == null || !isFinite(e)) e = slice.length / ASR_SR;
           const text = toTraditional(String(ch.text || "").trim());
           if (!text) continue;
+          let start = t0 + s;
+          const end = Math.min(duration, t0 + e);
+          // Whisper 起點常偏早(把前面的靜音吸進來),對齊到實際開口點
+          const onset = findOnset(start, Math.min(ONSET_MAX_AHEAD, Math.max(0, end - start - 0.1)));
+          if (onset !== null && onset > start + 0.06) {
+            start = Math.max(0, onset - ONSET_LEAD);
+          }
           out.push({
-            start: +(t0 + s).toFixed(2),
-            end: +Math.min(duration, t0 + e).toFixed(2),
+            start: +start.toFixed(2),
+            end: +end.toFixed(2),
             text,
           });
         }
@@ -377,7 +424,7 @@
       li.dataset.i = i;
 
       const play = rowBtn("▶", "跳到這句播放", () => {
-        video.currentTime = seg.start;
+        video.currentTime = Math.max(0, seg.start + timeOffset);
         video.play();
         video.scrollIntoView({ behavior: "smooth", block: "nearest" });
       });
@@ -489,14 +536,59 @@
     afterStructureChange();
   });
 
-  // 播放時把目前所在的句子亮起來
-  video.addEventListener("timeupdate", () => {
-    if (editorCard.hidden) return;
+  // ==========================================================
+  // 字幕時間位移(套用於預覽、匯出、燒錄)
+  // ==========================================================
+
+  function setOffset(v) {
+    timeOffset = Math.max(-30, Math.min(30, Math.round((v || 0) * 10) / 10));
+    offsetInput.value = timeOffset.toFixed(1);
+    updateCaption();
+    scheduleSave();
+  }
+
+  offsetInput.addEventListener("change", () => setOffset(parseFloat(offsetInput.value)));
+  offsetMinus.addEventListener("click", () => setOffset(timeOffset - OFFSET_STEP));
+  offsetPlus.addEventListener("click", () => setOffset(timeOffset + OFFSET_STEP));
+
+  // 套用位移後的字幕(空句剔除,時間夾到 0 以上)
+  function shiftedSegs() {
+    return segs
+      .filter((s) => s.text.trim())
+      .map((s) => ({
+        start: Math.max(0, s.start + timeOffset),
+        end: Math.max(0.1, s.end + timeOffset),
+        text: s.text.trim(),
+      }));
+  }
+
+  // 預覽播放器上的即時字幕(位移即時生效)
+  function updateCaption() {
+    if (editorCard.hidden) {
+      captionOverlay.hidden = true;
+      return;
+    }
     const t = video.currentTime;
-    const idx = segs.findIndex((s) => t >= s.start && t < s.end);
+    const idx = segs.findIndex(
+      (s) => s.text.trim() && t >= s.start + timeOffset && t < s.end + timeOffset);
+    const seg = segs[idx];
+    if (seg) {
+      captionOverlay.textContent = seg.text;
+      captionOverlay.hidden = false;
+    } else {
+      captionOverlay.hidden = true;
+    }
     subList.querySelectorAll(".sub-row").forEach((el, i) => {
       el.classList.toggle("active", i === idx);
     });
+  }
+
+  video.addEventListener("timeupdate", updateCaption);
+  video.addEventListener("seeked", updateCaption);
+  // 播放中用 rAF 更新,字幕切換才夠即時(timeupdate 只有約每 0.25 秒一次)
+  video.addEventListener("play", function loop() {
+    updateCaption();
+    if (!video.paused && !video.ended) requestAnimationFrame(() => loop());
   });
 
   // ==========================================================
@@ -510,10 +602,12 @@
 
   function saveDraft() {
     if (!currentFile) return;
+    if (!segs.length) return; // 不要用剛選檔的空狀態覆蓋既有草稿
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify({
         key: fileKey(currentFile),
         segs,
+        offset: timeOffset,
         savedAt: Date.now(),
       }));
       autosaveNote.textContent = "已自動暫存 " + new Date().toLocaleTimeString();
@@ -545,9 +639,9 @@
   }
 
   function toSRT(withBOM) {
-    const body = segs
-      .filter((s) => s.text.trim())
-      .map((s, i) => `${i + 1}\n${srtTimestamp(s.start)} --> ${srtTimestamp(s.end)}\n${s.text.trim()}\n`)
+    // \u5957\u7528\u6574\u9AD4\u4F4D\u79FB\u5F8C\u8F38\u51FA
+    const body = shiftedSegs()
+      .map((s, i) => `${i + 1}\n${srtTimestamp(s.start)} --> ${srtTimestamp(s.end)}\n${s.text}\n`)
       .join("\n");
     return (withBOM ? "\uFEFF" : "") + body;
   }

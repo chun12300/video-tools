@@ -73,6 +73,12 @@
 - 音訊用 `OfflineAudioContext(1,1,16000)` 解碼成 16kHz 單聲道,**每 30 秒一段**
   依序餵給 pipeline(`language:"chinese"`、`return_timestamps:true`),
   段與段之間更新進度;峰值 < −50 dB 的段直接跳過(Whisper 對無聲會幻聽)。
+- **Whisper 段落起點系統性偏早**(把語音前的靜音吸進段落、視窗首段常從 0.00 開始),
+  生成時用 20ms 音量包絡把每句起點對齊到實際開口點(`makeOnsetFinder`,
+  往後最多找 2 秒、對齊後提前 0.05 秒),門檻同自動剪輯(p95−25dB 夾 −55~−35)。
+- 「字幕時間位移」`timeOffset`(正=延後):**segs 永遠存原始時間**,
+  位移只在預覽(`updateCaption`)、匯出/燒錄(`shiftedSegs`)時套用,並存進草稿。
+  預覽字幕疊在播放器上(`#caption-overlay`),播放中用 rAF 更新。
 - 簡轉繁用 `opencc-js@1.4.1`(UMD),`Converter({from:"cn", to:"twp"})`
   ——twp 會一併轉台灣用語(视频→影片)。
 - 編輯器狀態存 `segs[{start,end,text}]`;任何修改 debounce 400ms 寫入
