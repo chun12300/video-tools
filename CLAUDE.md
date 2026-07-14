@@ -49,6 +49,20 @@
 - 記憶體控制:一次只有一支輸入檔在 wasm FS 裡,轉完立刻 `deleteFile`;
   總檔案大小超過 500 MB 在 UI 警告。
 
+### 自動剪輯(剪掉無聲片段)的設計
+
+- 音訊分析用 Web Audio API 而不是 ffmpeg(快很多):
+  `OfflineAudioContext(1, 1, 8000)` + `decodeAudioData` 重取樣到 8kHz,
+  算每 50ms 的 RMS 轉 dBFS 當音量包絡,快取在 `item.envelope`(換靈敏度不用重解碼)。
+- 門檻自適應:第 95 百分位音量 − 25 dB,夾在 −55 ~ −35 dBFS(`detectCuts`)。
+  有聲比例 < 5% 的影片視為「幾乎無聲」整支保留,避免全片被剪光。
+- 靈敏度=最短無聲長度:保守 1.5s/標準 0.8s/積極 0.4s;剪除段前後各留 0.15s 緩衝
+  (`CUT_PAD`),兩段剪除之間保留 < 0.2s 時併成一段。
+- **先預覽再剪**:分析結果存 `pendingCuts`(每段可勾「保留」),按「確認並合併」
+  才把剪除區間反轉成保留區間(`keepIntervalsFor`)展開成多段 job 進正規化流程,
+  不增加編碼次數;清單或剪輯一有變動就 `invalidatePreview()`。
+- `decodeAudioData` 失敗=沒有音軌(或音訊解不開),提示後整支保留。
+
 ## 測試
 
 無自動化測試框架。手動驗證方式:
