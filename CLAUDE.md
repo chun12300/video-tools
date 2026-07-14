@@ -8,6 +8,7 @@
 
 - **影片合併剪輯**(`merge.html` + `merge.js`):多支影片各剪一段、依順序合併輸出 MP4
 - **影片轉 GIF**(`gif.html` + `gif.js`):剪一段影片轉成 GIF
+- **語音辨識字幕**(`subtitle.html` + `subtitle.js`):Whisper 辨識 → 逐句編輯 → SRT / 燒進影片
 
 ## 核心原則(修改程式時必須遵守)
 
@@ -22,6 +23,7 @@
 - `index.html` — 首頁工具選單(兩個工具入口、三步驟說明)
 - `merge.html` / `merge.js` — 影片合併剪輯(多檔清單、拖曳排序、逐支剪輯、合併輸出 MP4)
 - `gif.html` / `gif.js` — 影片轉 GIF(單檔、剪輯、尺寸/幀率、輸出 GIF)
+- `subtitle.html` / `subtitle.js` — 語音辨識字幕(辨識、編輯、SRT、燒錄)
 - `ffmpeg-loader.js` — 共用的 ffmpeg.wasm CDN 載入模組(`window.FFmpegLoader`)
 - `style.css` — 深色主題樣式,響應式(以桌面為主)
 
@@ -63,6 +65,25 @@
   不增加編碼次數;清單或剪輯一有變動就 `invalidatePreview()`。
 - `decodeAudioData` 失敗=沒有音軌(或音訊解不開),提示後整支保留。
 
+### 語音辨識字幕(subtitle.js)的設計
+
+- Whisper 用 `@huggingface/transformers@3.8.1`(**固定 3.x**,4.x API 未驗證),
+  以動態 `import()` 從 CDN 載入 ESM;模型 `Xenova/whisper-small` + `dtype:"q8"`
+  (約 250 MB,transformers.js 會用瀏覽器 Cache API 快取)。
+- 音訊用 `OfflineAudioContext(1,1,16000)` 解碼成 16kHz 單聲道,**每 30 秒一段**
+  依序餵給 pipeline(`language:"chinese"`、`return_timestamps:true`),
+  段與段之間更新進度;峰值 < −50 dB 的段直接跳過(Whisper 對無聲會幻聽)。
+- 簡轉繁用 `opencc-js@1.4.1`(UMD),`Converter({from:"cn", to:"twp"})`
+  ——twp 會一併轉台灣用語(视频→影片)。
+- 編輯器狀態存 `segs[{start,end,text}]`;任何修改 debounce 400ms 寫入
+  localStorage(`subtitle-draft-v1`),以「檔名|大小」識別同一支影片來還原。
+- 燒錄用 `subtitles=subs.srt:fontsdir=/fonts:force_style='FontName=Noto Sans TC,...'`
+  ——core 已含 libass;字型用 npm 套件 `@expo-google-fonts/noto-sans-tc` 的 TTF
+  (約 7 MB,SIL OFL),寫進 wasm FS 的 `/fonts/`。FontName 必須是字型內部
+  家族名「Noto Sans TC」。SRT 匯出下載加 BOM,燒錄用的不加。
+- 「合併 → 生成字幕」交接:merge.js 把結果 blob 放進 IndexedDB(`video-tools`
+  資料庫的 `handoff` store),subtitle.html?from=merge 讀出後即刪。
+
 ## 測試
 
 無自動化測試框架。手動驗證方式:
@@ -72,7 +93,11 @@ python3 -m http.server 8000   # 開 http://localhost:8000
 ```
 
 跑完整流程確認:合併(兩支以上、其中一支無聲、調順序、各剪一段 → 輸出 MP4 可播放且有聲音)、
-GIF(選檔 → 剪輯 → 轉換 → 產出有效 GIF)。
+GIF(選檔 → 剪輯 → 轉換 → 產出有效 GIF)、
+字幕(辨識 → 編輯 → SRT → 燒錄後畫面下方真的有字)。
 若在無法直連 CDN 的環境,可從 registry.npmjs.org 下載上述套件 tarball,
 以本機伺服器或 Playwright route 攔截方式代替 CDN 提供檔案;
-無頭 Chromium 可能無法解碼 H.264,驗證 MP4 請改檢查位元組結構(ftyp/mvhd/trak)。
+Hugging Face 連不到時,可用 route 攔截回傳假的 transformers 模組
+(export `pipeline`/`env`,回傳固定 chunks)來測整條字幕 UI 流程;
+無頭 Chromium 可能無法解碼 H.264,驗證 MP4 請改檢查位元組結構(ftyp/mvhd/trak),
+驗證燒錄字幕可用 ffmpeg.wasm 抽單格 PNG、數畫面下緣的亮像素。

@@ -74,6 +74,7 @@
   const resultVideo = $("result-video");
   const resultSize = $("result-size");
   const downloadBtn = $("download-btn");
+  const subtitleBtn = $("subtitle-btn");
 
   // ---- 狀態 ----
   let items = [];        // {id, file, url, duration, width, height, start, end, envelope}
@@ -84,6 +85,7 @@
   let cancelled = false;
   let clipStopTimer = null;
   let resultURL = null;
+  let resultBlob = null;
   let ffmpeg = null;
   let pendingCuts = null; // 分析結果:[{itemId, start, end, keep}]
   let pendingNotes = [];  // 分析提示(無音軌等)
@@ -905,6 +907,7 @@
   function showResult(blob) {
     if (resultURL) URL.revokeObjectURL(resultURL);
     resultURL = URL.createObjectURL(blob);
+    resultBlob = blob;
     resultVideo.src = resultURL;
     downloadBtn.href = resultURL;
     resultSize.textContent = formatSize(blob.size);
@@ -912,8 +915,33 @@
     resultCard.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // 把合併結果交接給「語音辨識字幕」工具(IndexedDB 傳遞 blob)
+  subtitleBtn.addEventListener("click", async () => {
+    if (!resultBlob) return;
+    try {
+      const db = await new Promise((resolve, reject) => {
+        const req = indexedDB.open("video-tools", 1);
+        req.onupgradeneeded = () => req.result.createObjectStore("handoff");
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("handoff", "readwrite");
+        tx.objectStore("handoff").put(
+          { blob: resultBlob, name: "merged.mp4", savedAt: Date.now() }, "merged");
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      location.href = "subtitle.html?from=merge";
+    } catch (err) {
+      console.error(err);
+      showError(mergeError, "無法傳遞影片到字幕工具,請先下載 MP4 再到字幕頁面選擇該檔案。");
+    }
+  });
+
   function resetResult() {
     resultCard.hidden = true;
+    resultBlob = null;
     if (resultURL) {
       URL.revokeObjectURL(resultURL);
       resultURL = null;
