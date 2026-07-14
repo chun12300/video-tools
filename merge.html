@@ -72,6 +72,26 @@
     <!-- 合併 -->
     <section class="card" id="merge-card" hidden>
       <p class="merge-summary">共 <strong id="merge-count">0</strong> 支影片,合併後總長約 <strong id="merge-length">0</strong> 秒</p>
+
+      <fieldset class="options">
+        <legend>自動剪輯</legend>
+        <label class="switch-row">
+          <input type="checkbox" id="autocut-toggle">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="switch-label">🔇 自動剪輯:偵測無聲/停頓片段並剪掉</span>
+        </label>
+        <div id="autocut-settings" hidden>
+          <div class="option-group" role="radiogroup" aria-label="靈敏度">
+            <span class="option-label">靈敏度</span>
+            <label class="chip"><input type="radio" name="sensitivity" value="conservative"><span>保守(只剪 1.5 秒以上空白)</span></label>
+            <label class="chip"><input type="radio" name="sensitivity" value="standard" checked><span>標準(剪 0.8 秒以上停頓)</span></label>
+            <label class="chip"><input type="radio" name="sensitivity" value="aggressive"><span>積極(連 0.4 秒短停頓都剪)</span></label>
+          </div>
+          <p class="merge-hint">剪除片段前後會各保留約 0.15 秒緩衝,避免切到說話的開頭結尾。
+            分析完成後會先列出要剪掉的片段讓你確認,<strong>不會直接剪</strong>。</p>
+        </div>
+      </fieldset>
+
       <p class="merge-hint">💡 影片會逐支重新編碼後合併,速度較慢,長片請耐心等候。</p>
       <button type="button" id="merge-btn" class="btn btn-primary">🚀 合併輸出 MP4</button>
 
@@ -81,6 +101,20 @@
         <button type="button" id="cancel-btn" class="btn btn-ghost">取消</button>
       </div>
       <p id="merge-error" class="error-msg" hidden></p>
+    </section>
+
+    <!-- 自動剪輯預覽與確認 -->
+    <section class="card" id="preview-card" hidden>
+      <h2 class="section-title">🔍 自動剪輯預覽</h2>
+      <ul id="analysis-notes" class="analysis-notes" hidden></ul>
+      <p id="no-cuts-msg" class="merge-hint" hidden>沒有偵測到可剪除的無聲片段;按「確認並合併」會保留全部內容。</p>
+      <ul id="cut-list" class="cut-list"></ul>
+      <p class="cut-stats">原始總長度 <strong id="stat-before"></strong> → 剪輯後約 <strong id="stat-after"></strong>,省下 <strong id="stat-saved"></strong></p>
+      <p id="empty-warning" class="warn-msg" hidden></p>
+      <div class="result-actions">
+        <button type="button" id="confirm-merge-btn" class="btn btn-primary">✅ 確認並合併</button>
+        <button type="button" id="preview-cancel-btn" class="btn btn-ghost">返回調整</button>
+      </div>
     </section>
 
     <!-- 結果 -->

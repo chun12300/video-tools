@@ -512,6 +512,131 @@ legend {
   font-size: 0.85rem;
 }
 
+/* ---- 自動剪輯開關 ---- */
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  margin: 6px 0;
+  user-select: none;
+}
+
+.switch-row input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-track {
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.15s, background-color 0.15s;
+}
+
+.switch-row input:checked + .switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch-row input:checked + .switch-track::after {
+  transform: translateX(18px);
+  background: var(--accent-text);
+}
+
+.switch-row input:focus-visible + .switch-track {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 2px;
+}
+
+.switch-label { font-size: 0.95rem; }
+
+/* ---- 自動剪輯預覽 ---- */
+.analysis-notes {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cut-list {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.cut-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.88rem;
+}
+
+.cut-item.kept { opacity: 0.55; }
+
+.cut-item.kept .cut-desc { text-decoration: line-through; }
+
+.cut-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cut-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.cut-check input { accent-color: var(--accent); }
+
+.cut-stats {
+  margin: 12px 0;
+  font-size: 0.92rem;
+  color: var(--text-dim);
+}
+
+.cut-stats strong { color: var(--text); }
+
 /* ---- 進度 ---- */
 .progress-area {
   margin-top: 20px;

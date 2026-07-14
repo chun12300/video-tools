@@ -1,6 +1,8 @@
 /* ===== 影片合併剪輯 =====
  * 多支影片各剪一段,逐支正規化(統一解析度/幀率/編碼)後以 concat 合併。
  * 逐支處理是刻意設計:同時只有一支影片留在 wasm 檔案系統,控制記憶體用量。
+ * 「自動剪輯」用 Web Audio API 分析音量包絡找無聲片段(比 ffmpeg 分析快),
+ * 剪除片段直接展開成多段 keep 區間進正規化流程,不增加編碼次數。
  */
 (() => {
   "use strict";
@@ -9,6 +11,19 @@
   const SUGGESTED_TOTAL_MB = 500;  // 總量建議上限,超過即警告
   const OUT_FPS = 30;              // 合併輸出幀率
   const MAX_OUT_WIDTH = 1280;      // 合併輸出寬度上限(記憶體/速度考量)
+
+  // ---- 自動剪輯參數 ----
+  const SENSITIVITY = {
+    conservative: 1.5, // 只剪 1.5 秒以上空白
+    standard: 0.8,     // 剪 0.8 秒以上停頓
+    aggressive: 0.4,   // 連 0.4 秒短停頓都剪
+  };
+  const CUT_PAD = 0.15;        // 剪除片段前後保留的緩衝秒數
+  const ENV_HOP = 0.05;        // 音量包絡取樣間隔(秒)
+  const ANALYZE_SR = 8000;     // 分析用取樣率(語音夠用,省記憶體)
+  const MIN_KEEP_GAP = 0.2;    // 兩段剪除之間的保留若短於此,併成一段剪除
+  const MIN_CUT_LEN = 0.05;    // 扣掉緩衝後短於此的剪除直接捨棄
+  const MIN_VOICED_RATIO = 0.05; // 有聲比例低於此視為「幾乎無聲」,整支保留
 
   const { createLoadedFFmpeg, formatSize } = window.FFmpegLoader;
 
@@ -38,6 +53,18 @@
   const mergeCount = $("merge-count");
   const mergeLength = $("merge-length");
   const mergeBtn = $("merge-btn");
+  const autocutToggle = $("autocut-toggle");
+  const autocutSettings = $("autocut-settings");
+  const previewCard = $("preview-card");
+  const analysisNotes = $("analysis-notes");
+  const noCutsMsg = $("no-cuts-msg");
+  const cutList = $("cut-list");
+  const statBefore = $("stat-before");
+  const statAfter = $("stat-after");
+  const statSaved = $("stat-saved");
+  const emptyWarning = $("empty-warning");
+  const confirmMergeBtn = $("confirm-merge-btn");
+  const previewCancelBtn = $("preview-cancel-btn");
   const progressArea = $("progress-area");
   const progressText = $("progress-text");
   const progressBar = $("progress-bar");
@@ -49,15 +76,17 @@
   const downloadBtn = $("download-btn");
 
   // ---- 狀態 ----
-  let items = [];        // {id, file, url, duration, width, height, start, end}
+  let items = [];        // {id, file, url, duration, width, height, start, end, envelope}
   let nextId = 1;
   let selectedId = null; // 正在剪輯的項目
   let dragId = null;     // 正在拖曳的項目
-  let merging = false;
+  let busy = false;      // 分析或合併進行中
   let cancelled = false;
   let clipStopTimer = null;
   let resultURL = null;
   let ffmpeg = null;
+  let pendingCuts = null; // 分析結果:[{itemId, start, end, keep}]
+  let pendingNotes = [];  // 分析提示(無音軌等)
 
   async function getFFmpeg(onStatus) {
     if (ffmpeg && ffmpeg.loaded) return ffmpeg;
@@ -71,6 +100,10 @@
 
   const ACCEPT_RE = /\.(mp4|mov|webm)$/i;
   const ACCEPT_MIME = ["video/mp4", "video/quicktime", "video/webm"];
+  const HEVC_HINT =
+    "若是 iPhone 拍的影片,很可能是 HEVC/H.265 編碼,瀏覽器無法解碼;" +
+    "可到 iPhone「設定 → 相機 → 格式」改選「最相容」再重新拍攝/匯出," +
+    "或先用其他工具轉成 H.264 MP4。";
 
   async function addFiles(fileListLike) {
     hideError(fileError);
@@ -98,13 +131,15 @@
           height: meta.height,
           start: 0,
           end: meta.duration,
+          envelope: null, // 音量包絡快取(自動剪輯用)
         });
       } catch (_) {
-        errors.push(`「${file.name}」無法讀取,可能已損壞或編碼不支援。`);
+        errors.push(`「${file.name}」無法讀取,可能已損壞或編碼不支援。${HEVC_HINT}`);
       }
     }
 
     if (errors.length) showError(fileError, errors.join("\n"));
+    invalidatePreview();
     render();
   }
 
@@ -261,6 +296,7 @@
     if (to < 0 || to >= items.length || from === to) return;
     const [it] = items.splice(from, 1);
     items.splice(to, 0, it);
+    invalidatePreview();
     render();
   }
 
@@ -269,6 +305,7 @@
     if (i === -1) return;
     URL.revokeObjectURL(items[i].url);
     items.splice(i, 1);
+    invalidatePreview();
     render();
   }
 
@@ -343,6 +380,7 @@
     }
     startRange.value = startInput.value = start.toFixed(1);
     endRange.value = endInput.value = end.toFixed(1);
+    if (item.start !== start || item.end !== end) invalidatePreview();
     item.start = start;
     item.end = end;
     clipLengthEl.textContent = (end - start).toFixed(1);
@@ -380,6 +418,265 @@
     editorVideo.currentTime = start;
     editorVideo.play();
     clipStopTimer = setTimeout(() => editorVideo.pause(), (end - start) * 1000);
+  });
+
+  // ==========================================================
+  // 自動剪輯:音量分析(Web Audio API)
+  // ==========================================================
+
+  // 解碼音軌並取得音量包絡(每 ENV_HOP 秒一格的 dBFS)。結果快取在 item 上。
+  // 沒有音軌或解不開時丟出例外,由呼叫端當成「略過自動剪輯」處理。
+  async function getEnvelope(item) {
+    if (item.envelope) return item.envelope;
+    const buf = await item.file.arrayBuffer();
+    // 用低取樣率的 OfflineAudioContext 解碼,自動重取樣,省記憶體
+    const actx = new OfflineAudioContext(1, 1, ANALYZE_SR);
+    const audio = await actx.decodeAudioData(buf);
+    const hopN = Math.round(ENV_HOP * audio.sampleRate);
+    const n = Math.max(1, Math.ceil(audio.length / hopN));
+    const db = new Float32Array(n);
+    const chs = [];
+    for (let c = 0; c < audio.numberOfChannels; c++) chs.push(audio.getChannelData(c));
+    for (let w = 0; w < n; w++) {
+      const s0 = w * hopN;
+      const s1 = Math.min(audio.length, s0 + hopN);
+      let sum = 0;
+      for (const ch of chs) {
+        for (let s = s0; s < s1; s++) sum += ch[s] * ch[s];
+      }
+      const cnt = Math.max(1, (s1 - s0) * chs.length);
+      db[w] = 20 * Math.log10(Math.sqrt(sum / cnt) + 1e-8);
+    }
+    item.envelope = { db, hop: ENV_HOP };
+    return item.envelope;
+  }
+
+  // 由包絡找出要剪除的區間(以來源影片時間軸計,已限制在手動剪輯範圍內)。
+  // 門檻採自適應:以第 95 百分位音量(大聲參考)往下 25 dB,再夾在 -55 ~ -35 dBFS。
+  function detectCuts(item, minSilence) {
+    const { db, hop } = item.envelope;
+    const sorted = Array.from(db).sort((a, b) => a - b);
+    const p95 = sorted[Math.floor((sorted.length - 1) * 0.95)];
+    const threshold = Math.min(-35, Math.max(-55, p95 - 25));
+
+    let voicedCount = 0;
+    for (const v of db) if (v >= threshold) voicedCount++;
+    if (voicedCount / db.length < MIN_VOICED_RATIO) {
+      return { cuts: [], reason: "too-quiet" }; // 幾乎整段無聲,不敢亂剪,整支保留
+    }
+
+    // 找出手動剪輯範圍內、長度達 minSilence 的無聲連續段
+    const rawCuts = [];
+    let runStart = null;
+    for (let w = 0; w <= db.length; w++) {
+      const silent = w < db.length && db[w] < threshold;
+      const t = w * hop;
+      if (silent && runStart === null) runStart = t;
+      if (!silent && runStart !== null) {
+        const s = Math.max(runStart, item.start);
+        const e = Math.min(t, item.end);
+        if (e - s >= minSilence) {
+          // 前後各留緩衝,避免切到說話的開頭結尾
+          const cs = s + CUT_PAD;
+          const ce = e - CUT_PAD;
+          if (ce - cs >= MIN_CUT_LEN) rawCuts.push([cs, ce]);
+        }
+        runStart = null;
+      }
+    }
+
+    // 兩段剪除間夾著極短的保留(通常是雜音)時,併成一段
+    const cuts = [];
+    for (const c of rawCuts) {
+      const last = cuts[cuts.length - 1];
+      if (last && c[0] - last[1] < MIN_KEEP_GAP) last[1] = c[1];
+      else cuts.push(c);
+    }
+    return { cuts };
+  }
+
+  function currentSensitivity() {
+    const el = document.querySelector('input[name="sensitivity"]:checked');
+    return SENSITIVITY[el ? el.value : "standard"];
+  }
+
+  // 分析所有影片 → pendingCuts / pendingNotes
+  async function analyzeAll() {
+    const minSilence = currentSensitivity();
+    const cuts = [];
+    const notes = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      setProgress((i + 0.5) / items.length, `分析音軌中…(${i + 1}/${items.length})${item.file.name}`);
+      // 讓進度條有機會重繪
+      await new Promise((r) => setTimeout(r, 0));
+      if (cancelled) return null;
+      try {
+        await getEnvelope(item);
+      } catch (_) {
+        notes.push(`🔇 第 ${i + 1} 支「${item.file.name}」偵測不到音軌(或無法解析音訊),已略過自動剪輯,整支保留。`);
+        continue;
+      }
+      const res = detectCuts(item, minSilence);
+      if (res.reason === "too-quiet") {
+        notes.push(`🤫 第 ${i + 1} 支「${item.file.name}」幾乎整段都是無聲,為避免剪錯已整支保留;若確定要剪請手動剪輯。`);
+        continue;
+      }
+      for (const [s, e] of res.cuts) {
+        cuts.push({ itemId: item.id, start: s, end: e, keep: false });
+      }
+    }
+    return { cuts, notes };
+  }
+
+  // ==========================================================
+  // 自動剪輯:預覽與確認
+  // ==========================================================
+
+  autocutToggle.addEventListener("change", () => {
+    autocutSettings.hidden = !autocutToggle.checked;
+    mergeBtn.textContent = autocutToggle.checked ? "🔍 分析無聲片段" : "🚀 合併輸出 MP4";
+    invalidatePreview();
+  });
+
+  document.querySelectorAll('input[name="sensitivity"]').forEach((el) =>
+    el.addEventListener("change", () => {
+      // 包絡已快取,重跑偵測很快;預覽開著就直接更新
+      if (!previewCard.hidden && !busy) runAnalysis();
+    })
+  );
+
+  function invalidatePreview() {
+    pendingCuts = null;
+    pendingNotes = [];
+    previewCard.hidden = true;
+  }
+
+  async function runAnalysis() {
+    busy = true;
+    cancelled = false;
+    mergeBtn.disabled = true;
+    hideError(mergeError);
+    resetResult();
+    previewCard.hidden = true;
+    progressArea.hidden = false;
+    setProgress(0, "準備分析…");
+    try {
+      const res = await analyzeAll();
+      if (cancelled || !res) return;
+      pendingCuts = res.cuts;
+      pendingNotes = res.notes;
+      renderPreview();
+    } catch (err) {
+      console.error(err);
+      showError(mergeError, "分析失敗:" + (err && err.message ? err.message : err));
+    } finally {
+      busy = false;
+      mergeBtn.disabled = false;
+      progressArea.hidden = true;
+    }
+  }
+
+  // 依項目把「剪除區間」反轉成「保留區間」
+  function keepIntervalsFor(item) {
+    const active = (pendingCuts || [])
+      .filter((c) => c.itemId === item.id && !c.keep)
+      .sort((a, b) => a.start - b.start);
+    const keeps = [];
+    let cur = item.start;
+    for (const c of active) {
+      if (c.start > cur + MIN_CUT_LEN) keeps.push([cur, c.start]);
+      cur = Math.max(cur, c.end);
+    }
+    if (item.end > cur + MIN_CUT_LEN) keeps.push([cur, item.end]);
+    return keeps;
+  }
+
+  function renderPreview() {
+    // 剪除清單
+    cutList.textContent = "";
+    const itemIndex = new Map(items.map((it, i) => [it.id, i]));
+    pendingCuts.forEach((cut) => {
+      const li = document.createElement("li");
+      li.className = "cut-item";
+
+      const label = document.createElement("label");
+      label.className = "cut-check";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = cut.keep;
+      cb.addEventListener("change", () => {
+        cut.keep = cb.checked;
+        li.classList.toggle("kept", cut.keep);
+        renderPreviewStats();
+      });
+      const cbText = document.createElement("span");
+      cbText.textContent = "保留";
+      label.append(cb, cbText);
+
+      const desc = document.createElement("span");
+      desc.className = "cut-desc";
+      const i = itemIndex.get(cut.itemId);
+      const name = items[i] ? items[i].file.name : "?";
+      desc.textContent =
+        `第 ${i + 1} 支「${name}」 ${formatTime(cut.start)} – ${formatTime(cut.end)}` +
+        `(${(cut.end - cut.start).toFixed(1)} 秒)`;
+
+      li.append(desc, label);
+      li.classList.toggle("kept", cut.keep);
+      cutList.appendChild(li);
+    });
+
+    // 提示(無音軌等)
+    analysisNotes.textContent = "";
+    for (const n of pendingNotes) {
+      const li = document.createElement("li");
+      li.textContent = n;
+      analysisNotes.appendChild(li);
+    }
+    analysisNotes.hidden = pendingNotes.length === 0;
+    noCutsMsg.hidden = pendingCuts.length > 0;
+
+    renderPreviewStats();
+    previewCard.hidden = false;
+    previewCard.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function renderPreviewStats() {
+    const before = items.reduce((s, it) => s + (it.end - it.start), 0);
+    const cutTotal = pendingCuts.reduce((s, c) => s + (c.keep ? 0 : c.end - c.start), 0);
+    const after = Math.max(0, before - cutTotal);
+    statBefore.textContent = formatDuration(before);
+    statAfter.textContent = formatDuration(after);
+    statSaved.textContent = formatDuration(cutTotal);
+
+    // 有影片會被整支剪光時提醒(合併時會跳過)
+    const emptied = items.filter((it) => keepIntervalsFor(it).length === 0);
+    if (emptied.length) {
+      emptyWarning.textContent =
+        "⚠️ " + emptied.map((it) => `「${it.file.name}」`).join("、") +
+        "剪完後沒有剩餘內容,合併時會整支跳過;若要保留請勾選該影片的片段。";
+      emptyWarning.hidden = false;
+    } else {
+      emptyWarning.hidden = true;
+    }
+  }
+
+  previewCancelBtn.addEventListener("click", () => {
+    previewCard.hidden = true;
+    mergeCard.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  confirmMergeBtn.addEventListener("click", () => {
+    if (busy) return;
+    const jobs = buildJobs(true);
+    if (jobs.length === 0) {
+      showError(mergeError, "剪完後沒有任何內容可以合併,請取消勾選一些剪除片段。");
+      previewCard.hidden = true;
+      return;
+    }
+    previewCard.hidden = true;
+    runMerge(jobs);
   });
 
   // ==========================================================
@@ -437,9 +734,36 @@
     return /Stream #0:\d+.*Audio/.test(logs);
   }
 
-  mergeBtn.addEventListener("click", async () => {
-    if (merging || items.length === 0) return;
-    merging = true;
+  // 把清單(含自動剪輯結果)展開成逐段工作。
+  // 一支影片可能有多個保留區間,每個區間各產生一個正規化片段,
+  // 仍然是「每一格輸出畫面只編碼一次」,不會重複編碼。
+  function buildJobs(useAutoCut) {
+    const jobs = [];
+    for (const item of items) {
+      const keeps = useAutoCut && pendingCuts
+        ? keepIntervalsFor(item)
+        : [[item.start, item.end]];
+      for (const [s, e] of keeps) {
+        if (e - s >= MIN_CUT_LEN) {
+          jobs.push({ file: item.file, name: item.file.name, start: s, dur: e - s });
+        }
+      }
+    }
+    return jobs;
+  }
+
+  mergeBtn.addEventListener("click", () => {
+    if (busy || items.length === 0) return;
+    if (autocutToggle.checked) {
+      runAnalysis();
+    } else {
+      runMerge(buildJobs(false));
+    }
+  });
+
+  async function runMerge(jobs) {
+    if (busy || jobs.length === 0) return;
+    busy = true;
     cancelled = false;
     mergeBtn.disabled = true;
     hideError(mergeError);
@@ -448,12 +772,6 @@
     progressArea.hidden = false;
     setProgress(0, "準備中…");
 
-    // 先固定這次要處理的清單快照,避免轉檔中清單被改動
-    const jobs = items.map((it) => ({
-      file: it.file,
-      start: it.start,
-      dur: Math.max(0.1, it.end - it.start),
-    }));
     const totalDur = jobs.reduce((s, j) => s + j.dur, 0);
     const { w, h } = targetSize();
     const segNames = [];
@@ -463,25 +781,33 @@
       if (cancelled) return;
       const { fetchFile } = window.FFmpegUtil;
 
-      // 逐支處理:剪輯 + 正規化成相同規格的 mp4 片段
+      // 逐段處理:剪輯 + 正規化成相同規格的 mp4 片段。
+      // 同一支影片的多個片段共用一次輸入檔寫入與音軌偵測。
       let doneDur = 0;
+      let loadedFile = null;
+      let loadedName = null;
+      let loadedHasAudio = false;
       for (let i = 0; i < jobs.length; i++) {
         const job = jobs[i];
-        const ext = (job.file.name.match(ACCEPT_RE) || [".mp4"])[0].toLowerCase();
-        const inName = `in_${i}${ext}`;
+        const ext = (job.name.match(ACCEPT_RE) || [".mp4"])[0].toLowerCase();
+        const inName = `input${ext}`;
         const segName = `seg_${i}.mp4`;
-        const label = `(${i + 1}/${jobs.length})${job.file.name}`;
+        const label = `(${i + 1}/${jobs.length})${job.name}`;
 
-        setProgress(doneDur / totalDur * 0.9, `讀取中… ${label}`);
-        await ff.writeFile(inName, await fetchFile(job.file));
-        if (cancelled) return;
+        if (loadedFile !== job.file) {
+          if (loadedFile) await ff.deleteFile(loadedName).catch(() => {});
+          setProgress((doneDur / totalDur) * 0.9, `讀取中… ${label}`);
+          await ff.writeFile(inName, await fetchFile(job.file));
+          if (cancelled) return;
+          loadedFile = job.file;
+          loadedName = inName;
+          loadedHasAudio = await probeHasAudio(ff, inName);
+          if (cancelled) return;
+        }
 
-        const hasAudio = await probeHasAudio(ff, inName);
-        if (cancelled) return;
-
-        const inputs = ["-ss", job.start.toFixed(2), "-t", job.dur.toFixed(2), "-i", inName];
+        const inputs = ["-ss", job.start.toFixed(2), "-t", job.dur.toFixed(2), "-i", loadedName];
         let mapArgs;
-        if (hasAudio) {
+        if (loadedHasAudio) {
           mapArgs = ["-map", "0:v:0", "-map", "0:a:0"];
         } else {
           await ff.writeFile("silence.wav", makeSilenceWav(job.dur));
@@ -513,14 +839,14 @@
           ff.off("progress", onProgress);
         }
         if (cancelled) return;
-        if (ret !== 0) throw new Error(`「${job.file.name}」轉檔失敗(exit code ${ret})`);
+        if (ret !== 0) throw new Error(`「${job.name}」轉檔失敗(exit code ${ret})`);
 
-        // 立刻清掉輸入檔,控制記憶體
-        await ff.deleteFile(inName).catch(() => {});
-        if (!hasAudio) await ff.deleteFile("silence.wav").catch(() => {});
+        if (!loadedHasAudio) await ff.deleteFile("silence.wav").catch(() => {});
         segNames.push(segName);
         doneDur += job.dur;
       }
+      // 最後一支輸入檔也清掉,控制記憶體
+      if (loadedName) await ff.deleteFile(loadedName).catch(() => {});
 
       // 片段規格一致,concat 直接串流複製,不再重新編碼
       setProgress(0.92, "正在合併片段…");
@@ -555,21 +881,21 @@
         ffmpeg = null;
       }
     } finally {
-      merging = false;
+      busy = false;
       mergeBtn.disabled = false;
       progressArea.hidden = true;
     }
-  });
+  }
 
   cancelBtn.addEventListener("click", () => {
-    if (!merging) return;
+    if (!busy) return;
     cancelled = true;
     try { ffmpeg && ffmpeg.terminate(); } catch (_) {}
     ffmpeg = null; // terminate 後需要重新載入
-    merging = false;
+    busy = false;
     mergeBtn.disabled = false;
     progressArea.hidden = true;
-    showError(mergeError, "已取消合併。");
+    showError(mergeError, "已取消。");
   });
 
   // ==========================================================
@@ -598,6 +924,18 @@
   // ==========================================================
   // 小工具
   // ==========================================================
+
+  function formatTime(t) {
+    const m = Math.floor(t / 60);
+    const s = t - m * 60;
+    return `${m}:${s.toFixed(1).padStart(4, "0")}`;
+  }
+
+  function formatDuration(t) {
+    const m = Math.floor(t / 60);
+    const s = t - m * 60;
+    return m > 0 ? `${m} 分 ${s.toFixed(1)} 秒` : `${s.toFixed(1)} 秒`;
+  }
 
   function showError(el, msg) {
     el.textContent = msg;
