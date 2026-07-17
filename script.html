@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>腳本轉影片 — 影片小工具箱</title>
+  <meta name="description" content="貼上文案自動分句、配圖、產生語音旁白,在瀏覽器裡合成直式短影片,檔案不會上傳到任何伺服器。">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📜</text></svg>">
+</head>
+<body>
+  <header class="site-header">
+    <p class="back-link"><a href="index.html">← 回工具選單</a></p>
+    <h1>📜 腳本轉影片</h1>
+    <p class="tagline">貼上文案,自動分句、配圖、產生語音旁白,合成直式短影片 — <strong>全程在你的瀏覽器完成</strong>。</p>
+    <p class="desktop-hint">💻 請使用桌面版 Chrome(語音錄製功能需要)</p>
+  </header>
+
+  <main>
+    <p id="support-warning" class="warn-msg" hidden></p>
+
+    <!-- 步驟導覽 -->
+    <nav class="wizard-nav" aria-label="步驟導覽">
+      <button type="button" class="wizard-step is-active" data-step="1"><span class="step-num">1</span>貼腳本</button>
+      <span class="step-arrow" aria-hidden="true">→</span>
+      <button type="button" class="wizard-step" data-step="2" disabled><span class="step-num">2</span>配圖</button>
+      <span class="step-arrow" aria-hidden="true">→</span>
+      <button type="button" class="wizard-step" data-step="3" disabled><span class="step-num">3</span>語音</button>
+      <span class="step-arrow" aria-hidden="true">→</span>
+      <button type="button" class="wizard-step" data-step="4" disabled><span class="step-num">4</span>輸出</button>
+    </nav>
+
+    <!-- 步驟 1:貼上腳本 -->
+    <section class="card" id="step-1">
+      <h2 class="section-title">步驟 1:貼上腳本</h2>
+      <p class="list-hint">貼上文案後按「分析腳本」,會依標點符號(。!?)與換行自動分句,每句成為一個場景。</p>
+      <textarea id="script-input" class="script-input" rows="10"
+        placeholder="把你的文案貼在這裡…&#10;&#10;例如:今天要跟大家分享三個整理房間的小技巧。第一個技巧是先從桌面開始!你有沒有發現,桌面亂的時候做什麼都靜不下心?"></textarea>
+      <p id="split-result" class="ok-msg" hidden></p>
+      <p id="step1-error" class="error-msg" hidden></p>
+      <button type="button" id="analyze-btn" class="btn btn-primary">🔍 分析腳本</button>
+    </section>
+
+    <!-- 步驟 2:設定每個場景 -->
+    <section class="card" id="step-2" hidden>
+      <h2 class="section-title">步驟 2:設定每個場景</h2>
+      <p class="list-hint">每句是一個場景:文字可直接編輯(同時是字幕內容),可為場景上傳背景圖片;
+        沒有圖片的場景會用漸層背景+大字文字卡呈現。用 ↑↓ 調整順序。</p>
+      <ol id="scene-list" class="scene-list"></ol>
+      <button type="button" id="add-scene-btn" class="btn">＋ 新增場景</button>
+      <p id="step2-error" class="error-msg" hidden></p>
+      <input type="file" id="scene-img-input" accept="image/*" hidden>
+      <div class="wizard-actions">
+        <button type="button" class="btn" data-goto="1">← 上一步</button>
+        <button type="button" class="btn btn-primary btn-inline" data-goto="3">下一步:語音與樣式 →</button>
+      </div>
+    </section>
+
+    <!-- 步驟 3:語音與字幕樣式 -->
+    <section class="card" id="step-3" hidden>
+      <h2 class="section-title">步驟 3:語音與字幕樣式</h2>
+
+      <fieldset>
+        <legend>語音旁白</legend>
+        <div class="field-row">
+          <label for="voice-select">語音</label>
+          <select id="voice-select"></select>
+        </div>
+        <p id="voice-warning" class="warn-msg" hidden></p>
+        <div class="field-row">
+          <label for="rate-range">語速</label>
+          <input type="range" id="rate-range" min="0.8" max="1.3" step="0.05" value="1">
+          <span id="rate-value">1x</span>
+        </div>
+        <button type="button" id="voice-test-btn" class="btn">🔊 試聽第一句</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>字幕樣式</legend>
+        <div class="option-group" role="radiogroup" aria-label="字幕字體大小">
+          <span class="option-label">大小</span>
+          <label class="chip"><input type="radio" name="sub-size" value="large"><span>大</span></label>
+          <label class="chip"><input type="radio" name="sub-size" value="medium" checked><span>中</span></label>
+          <label class="chip"><input type="radio" name="sub-size" value="small"><span>小</span></label>
+        </div>
+        <div class="option-group" role="radiogroup" aria-label="字幕位置">
+          <span class="option-label">位置</span>
+          <label class="chip"><input type="radio" name="sub-pos" value="bottom" checked><span>下方</span></label>
+          <label class="chip"><input type="radio" name="sub-pos" value="middle"><span>中間</span></label>
+        </div>
+        <p class="list-hint">字幕固定為白字+黑色描邊+半透明黑底,確保任何背景都清楚;
+          沒有圖片的場景以大字文字卡顯示該句文字,不另外疊小字幕。</p>
+      </fieldset>
+
+      <div class="wizard-actions">
+        <button type="button" class="btn" data-goto="2">← 上一步</button>
+        <button type="button" class="btn btn-primary btn-inline" data-goto="4">下一步:預覽與輸出 →</button>
+      </div>
+    </section>
+
+    <!-- 步驟 4:預覽與輸出 -->
+    <section class="card" id="step-4" hidden>
+      <h2 class="section-title">步驟 4:預覽與輸出</h2>
+
+      <div class="canvas-wrap">
+        <canvas id="stage" width="1080" height="1920" aria-label="影片預覽畫面"></canvas>
+      </div>
+      <p id="play-status" class="list-hint" role="status"></p>
+
+      <div class="wizard-actions">
+        <button type="button" class="btn" data-goto="3">← 上一步</button>
+        <button type="button" id="preview-btn" class="btn">▶ 預覽</button>
+        <button type="button" id="stop-btn" class="btn" hidden>⏹ 停止</button>
+      </div>
+
+      <div class="howto-box">
+        <h3>🔊 怎麼把語音錄進影片?(重要)</h3>
+        <p>瀏覽器的合成語音無法直接錄音,需要借用「分享分頁音訊」功能。
+          按下「生成影片」後,Chrome 會跳出分享畫面的視窗,請照著做:</p>
+        <ol>
+          <li>選擇「<strong>Chrome 分頁</strong>」標籤,點選<strong>目前這個分頁</strong></li>
+          <li>✅ 勾選左下角的「<strong>同時分享分頁音訊</strong>」</li>
+          <li>按「<strong>分享</strong>」開始錄製</li>
+        </ol>
+        <p>錄製期間請<strong>保持此分頁在最前面</strong>,不要切換視窗或最小化,直到生成完成。
+          若輸出的影片沒有聲音,可以改選「整個畫面」並勾選「分享系統音訊」再試一次。
+          若拒絕分享,仍可輸出<strong>無聲版本</strong>(有畫面和字幕)。</p>
+      </div>
+
+      <button type="button" id="generate-btn" class="btn btn-primary">🎬 生成影片</button>
+
+      <div id="gen-progress" class="progress-area" hidden>
+        <p id="gen-progress-text">準備中…</p>
+        <div class="progress-track"><div id="gen-progress-bar" class="progress-bar"></div></div>
+      </div>
+      <p id="gen-error" class="error-msg" hidden></p>
+
+      <div id="result-area" class="gen-result" hidden>
+        <h3 class="result-title">✅ 生成完成!</h3>
+        <p id="silent-note" class="warn-msg" hidden>此影片為<strong>無聲版本</strong>(未取得分頁音訊)。
+          想要有語音旁白,請用桌面版 Chrome 重新生成,並記得勾選「同時分享分頁音訊」。</p>
+        <video id="result-video" controls playsinline></video>
+        <p class="result-meta">檔案大小:<strong id="result-size"></strong>(WebM 格式)</p>
+        <div class="result-actions">
+          <a id="download-video" class="btn btn-primary" download="script-video.webm">⬇ 下載影片 (WebM)</a>
+          <a id="download-srt" class="btn" download="subtitle.srt">⬇ 下載字幕 (SRT)</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>🔒 隱私優先:分句、語音合成與影片錄製都在你的瀏覽器裡完成,文字與圖片不會上傳到任何伺服器。</p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
