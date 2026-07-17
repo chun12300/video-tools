@@ -21,23 +21,36 @@
   const DRAFT_KEY = "script-video-draft-v1";
   const FONT_STACK = '"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif';
   const SUB_SIZES = { large: 76, medium: 60, small: 46 };
+  const MAX_CHARS = 6;           // 語音角色上限
+  const TEST_SENTENCE = "你好,這是我的聲音,請問這樣可以嗎?";
+  const CHAR_COLORS = ["#5b8cff", "#ff7a7a", "#5ad19a", "#ffc95c", "#c58bff", "#ff9c6e", "#4dd0e1", "#f06292"];
+  // 依語音名稱推測性別(常見中文語音對照表,比對時去掉空白與符號)
+  const FEMALE_VOICES = ["hanhan", "hsiaochen", "hsiaoyu", "meijia", "yating", "xiaoxiao", "tingting"];
+  const MALE_VOICES = ["zhiwei", "yunjhe", "kangkang", "yunyang"];
 
   // ===== 狀態 =====
-  let scenes = [];        // { id, text, image, thumb, hue, crop:{x,y,w,h}(原圖座標) }
+  let scenes = [];        // { id, text, image, thumb, hue, crop:{x,y,w,h}(原圖座標), charId }
   let uid = 0;
   let voices = [];        // 下拉選單中的語音(中文優先)
+  let characters = [];    // { id, name, voiceURI, rate, pitch, color };[0] 固定是「旁白」,不可刪
+  let charUid = 0;
   let maxStep = 1;        // 已到達過的最大步驟(導覽列解鎖用)
   let play = null;        // 播放/錄製狀態,null = 閒置
   let currentUtter = null; // 防止 utterance 被 GC 導致 onend 不觸發
   let lastUrls = [];      // 上一次結果的 object URL,重生成時釋放
 
-  const settings = { voiceURI: "", rate: 1, subSize: "medium", subPos: "bottom" };
+  const settings = { subSize: "medium", subPos: "bottom" };
 
   const stage = $("stage");
   const ctx = stage.getContext("2d");
   const scriptInput = $("script-input");
   const sceneListEl = $("scene-list");
-  const voiceSelect = $("voice-select");
+
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+  const numOr = (v, lo, hi, dflt) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? clamp(n, lo, hi) : dflt;
+  };
 
   const ttsOk = () => "speechSynthesis" in window;
 
@@ -66,13 +79,47 @@
     }
   }
 
-  // ===== 草稿(只存文字與設定,圖片無法存進 localStorage)=====
+  // ===== 語音角色 =====
+  function makeCharacter(name) {
+    charUid += 1;
+    const used = characters.map((c) => c.color);
+    return {
+      id: charUid,
+      name,
+      voiceURI: characters[0] ? characters[0].voiceURI : "", // 沿用旁白的語音當起點
+      rate: 1,
+      pitch: 1,
+      color: CHAR_COLORS.find((c) => !used.includes(c)) || CHAR_COLORS[charUid % CHAR_COLORS.length],
+    };
+  }
+
+  // characters[0] 必須永遠存在且是「旁白」(預設角色)
+  function ensureNarrator() {
+    if (!characters.length) characters.push(makeCharacter("旁白"));
+  }
+
+  function charById(id) {
+    return characters.find((c) => c.id === id) || characters[0];
+  }
+
+  function findOrCreateCharacter(name) {
+    let c = characters.find((x) => x.name === name);
+    if (c) return c;
+    if (characters.length >= MAX_CHARS) return characters[0]; // 角色滿了,退回旁白
+    c = makeCharacter(name);
+    characters.push(c);
+    return c;
+  }
+
+  // ===== 草稿(只存文字/設定/角色,圖片無法存進 localStorage)=====
   let draftTimer = null;
   function saveDraft() {
     clearTimeout(draftTimer);
     draftTimer = setTimeout(() => {
       try {
-        localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: scriptInput.value, settings }));
+        const chars = characters.map(({ id, name, voiceURI, rate, pitch, color }) =>
+          ({ id, name, voiceURI, rate, pitch, color }));
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: scriptInput.value, settings, characters: chars }));
       } catch (e) { /* 空間不足時放棄暫存即可 */ }
     }, 400);
   }
@@ -82,7 +129,26 @@
       if (!raw) return;
       const d = JSON.parse(raw);
       if (typeof d.text === "string") scriptInput.value = d.text;
-      if (d.settings) Object.assign(settings, d.settings);
+      if (d.settings) {
+        settings.subSize = d.settings.subSize || settings.subSize;
+        settings.subPos = d.settings.subPos || settings.subPos;
+      }
+      if (Array.isArray(d.characters) && d.characters.length) {
+        characters = d.characters.slice(0, MAX_CHARS).map((c) => ({
+          id: Number(c.id) || 0,
+          name: String(c.name || "角色").slice(0, 12),
+          voiceURI: typeof c.voiceURI === "string" ? c.voiceURI : "",
+          rate: numOr(c.rate, 0.7, 1.4, 1),
+          pitch: numOr(c.pitch, 0.6, 1.6, 1),
+          color: CHAR_COLORS.includes(c.color) ? c.color : CHAR_COLORS[0],
+        }));
+        charUid = Math.max(0, ...characters.map((c) => c.id));
+      } else if (d.settings && (d.settings.voiceURI || d.settings.rate)) {
+        // 舊版草稿:全域語音設定併入預設角色「旁白」
+        ensureNarrator();
+        characters[0].voiceURI = d.settings.voiceURI || "";
+        characters[0].rate = numOr(d.settings.rate, 0.7, 1.4, 1);
+      }
     } catch (e) { /* 草稿壞掉就忽略 */ }
   }
 
@@ -112,7 +178,8 @@
   }
 
   // ===== 步驟 1:分句 =====
-  function splitScript(text) {
+  // 單行內依標點分句
+  function splitSentences(text) {
     const parts = [];
     let buf = "";
     const flush = () => {
@@ -122,7 +189,6 @@
       buf = "";
     };
     for (const ch of text) {
-      if (ch === "\n" || ch === "\r") { flush(); continue; }
       buf += ch;
       if ("。!?!?".includes(ch)) flush();
     }
@@ -130,9 +196,32 @@
     return parts;
   }
 
-  function makeScene(text) {
+  // 逐行解析:行首「角色名:」(全形或半形冒號)把整行台詞指定給該角色,
+  // 字幕內容去掉前綴;沒有前綴的句子歸「旁白」
+  function parseScript(text) {
+    const out = []; // { text, charName|null }
+    for (const rawLine of text.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      let charName = null;
+      let rest = line;
+      const m = line.match(/^([^::。!?!?\s]{1,12})[::]\s*/);
+      if (m) {
+        charName = m[1];
+        rest = line.slice(m[0].length);
+      }
+      for (const s of splitSentences(rest)) out.push({ text: s, charName });
+    }
+    return out;
+  }
+
+  function makeScene(text, charId) {
     uid += 1;
-    return { id: uid, text, image: null, thumb: null, hue: (uid * 53) % 360, crop: null };
+    ensureNarrator();
+    return {
+      id: uid, text, image: null, thumb: null, hue: (uid * 53) % 360, crop: null,
+      charId: charId || characters[0].id,
+    };
   }
 
   function imgSize(img) {
@@ -173,26 +262,44 @@
         !confirm("重新分析會清掉目前的場景設定(包括已上傳的圖片),確定要重新分析嗎?")) {
       return;
     }
-    const parts = splitScript(text);
+    const parts = parseScript(text);
     if (!parts.length) {
       showError("step1-error", "分不出任何句子,請確認文案內容。");
       return;
     }
-    scenes = parts.map(makeScene);
+    ensureNarrator();
+    const newNames = [];
+    scenes = parts.map((p) => {
+      let charId;
+      if (p.charName) {
+        const before = characters.length;
+        const c = findOrCreateCharacter(p.charName);
+        if (characters.length > before) newNames.push(c.name);
+        charId = c.id;
+      }
+      return makeScene(p.text, charId);
+    });
     const resultEl = $("split-result");
-    resultEl.textContent = `✅ 已分成 ${scenes.length} 個場景`;
+    resultEl.textContent = `✅ 已分成 ${scenes.length} 個場景` +
+      (newNames.length ? `,自動建立角色:${newNames.join("、")}(可在步驟 3 調整聲音)` : "");
     resultEl.hidden = false;
+    saveDraft();
+    renderCharacters();
     renderScenes();
     gotoStep(2);
   }
 
   // ===== 步驟 2:場景列表 =====
   function renderScenes() {
+    ensureNarrator();
     sceneListEl.textContent = "";
     scenes.forEach((scene, i) => {
+      if (!characters.some((c) => c.id === scene.charId)) scene.charId = characters[0].id;
+      const char = charById(scene.charId);
       const li = document.createElement("li");
       li.className = "scene-card";
       li.dataset.id = scene.id;
+      li.style.borderLeft = `4px solid ${char.color}`; // 角色代表色色條
 
       const thumb = document.createElement("div");
       thumb.className = "scene-thumb";
@@ -221,6 +328,27 @@
       head.className = "scene-head";
       head.innerHTML = `<span class="item-index">${i + 1}</span>` +
         `<span class="scene-kind">${scene.image ? "🖼 圖片背景" : "🎨 漸層文字卡"}</span>`;
+
+      // 這句由哪個角色唸
+      const charSel = document.createElement("select");
+      charSel.className = "scene-char";
+      charSel.title = "這句由哪個角色唸";
+      characters.forEach((c) => {
+        const opt = document.createElement("option");
+        opt.value = c.id;
+        opt.textContent = `● ${c.name}`;
+        opt.style.color = c.color;
+        charSel.appendChild(opt);
+      });
+      charSel.value = String(scene.charId);
+      charSel.style.color = char.color;
+      charSel.addEventListener("change", () => {
+        scene.charId = Number(charSel.value);
+        const c2 = charById(scene.charId);
+        li.style.borderLeft = `4px solid ${c2.color}`;
+        charSel.style.color = c2.color;
+      });
+      head.appendChild(charSel);
 
       const ta = document.createElement("textarea");
       ta.className = "scene-text";
@@ -359,8 +487,6 @@
   let cropState = null;  // { scene, scale, dispW, dispH, box:{x,y,w,h}(顯示座標) }
   let cropDrag = null;   // 進行中的拖曳 { mode:"move"|角落, startX, startY, startBox }
 
-  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
-
   function openCropModal(scene) {
     if (!scene.image) return;
     const { w, h } = imgSize(scene.image);
@@ -497,9 +623,17 @@
     if (ev.key === "Escape" && cropState) closeCropModal();
   });
 
-  // ===== 步驟 3:語音 =====
+  // ===== 步驟 3:語音角色管理 =====
+  // 依名稱對照表推測性別(對照表以外顯示「未知」)
+  function voiceGender(v) {
+    const n = (v.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (FEMALE_VOICES.some((h) => n.includes(h))) return "女聲";
+    if (MALE_VOICES.some((h) => n.includes(h))) return "男聲";
+    return "未知";
+  }
+
   function refreshVoices() {
-    if (!ttsOk()) return;
+    if (!ttsOk()) { renderCharacters(); return; }
     const all = speechSynthesis.getVoices();
     const rank = (v) => {
       const l = (v.lang || "").toLowerCase().replace("_", "-");
@@ -518,41 +652,218 @@
       warnEl.textContent = "⚠️ 找不到中文語音,以下列出系統所有語音;中文內容的發音可能不正確。";
       warnEl.hidden = false;
     }
-    voiceSelect.textContent = "";
+    // 一個男聲都偵測不到時,提示用音調模擬
+    $("male-voice-hint").hidden = !voices.length || voices.some((v) => voiceGender(v) === "男聲");
+    renderCharacters();
+  }
+
+  function buildVoiceOptions(select, selectedURI) {
+    select.textContent = "";
     if (!voices.length) {
       const opt = document.createElement("option");
       opt.value = "";
-      opt.textContent = all.length ? "(無可用語音)" : "(語音清單載入中…)";
-      voiceSelect.appendChild(opt);
+      opt.textContent = (ttsOk() && speechSynthesis.getVoices().length) ? "(無可用語音)" : "(語音清單載入中…)";
+      select.appendChild(opt);
       return;
     }
     voices.forEach((v) => {
       const opt = document.createElement("option");
       opt.value = v.voiceURI;
-      opt.textContent = `${v.name}(${v.lang})`;
-      voiceSelect.appendChild(opt);
+      opt.textContent = `${v.name}(${voiceGender(v)})`;
+      select.appendChild(opt);
     });
-    const saved = voices.find((v) => v.voiceURI === settings.voiceURI);
-    voiceSelect.value = (saved || voices[0]).voiceURI;
-    settings.voiceURI = voiceSelect.value;
+    const found = voices.find((v) => v.voiceURI === selectedURI);
+    select.value = (found || voices[0]).voiceURI;
   }
 
-  function getSelectedVoice() {
-    return voices.find((v) => v.voiceURI === settings.voiceURI) || voices[0] || null;
+  function charVoice(char) {
+    return voices.find((v) => v.voiceURI === char.voiceURI) || voices[0] || null;
   }
+
+  function fieldRow(labelText) {
+    const row = document.createElement("div");
+    row.className = "field-row";
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    row.appendChild(label);
+    return row;
+  }
+
+  function rangeInput(min, max, step, value) {
+    const r = document.createElement("input");
+    r.type = "range";
+    r.min = min;
+    r.max = max;
+    r.step = step;
+    r.value = value;
+    return r;
+  }
+
+  function renderCharacters() {
+    const listEl = $("char-list");
+    if (!listEl) return;
+    ensureNarrator();
+    listEl.textContent = "";
+    characters.forEach((char, idx) => {
+      const li = document.createElement("li");
+      li.className = "char-card";
+      li.style.borderLeft = `4px solid ${char.color}`;
+
+      // 名稱列:色點 + 名稱 + 試聽 + 刪除(旁白不可刪)
+      const head = document.createElement("div");
+      head.className = "char-head";
+      const dot = document.createElement("span");
+      dot.className = "char-dot";
+      dot.style.background = char.color;
+      const nameInput = document.createElement("input");
+      nameInput.className = "char-name";
+      nameInput.maxLength = 12;
+      nameInput.value = char.name;
+      nameInput.placeholder = "角色名稱";
+      nameInput.addEventListener("input", () => {
+        if (nameInput.value.trim()) char.name = nameInput.value.trim();
+      });
+      nameInput.addEventListener("change", () => {
+        nameInput.value = char.name; // 空白時還原
+        saveDraft();
+        renderScenes(); // 場景卡片的角色選單同步新名稱
+      });
+      const testBtn = document.createElement("button");
+      testBtn.type = "button";
+      testBtn.className = "btn btn-small";
+      testBtn.textContent = "🔊 試聽";
+      testBtn.addEventListener("click", () => {
+        if (!ttsOk()) {
+          alert("這個瀏覽器不支援語音合成,無法試聽。");
+          return;
+        }
+        speechSynthesis.cancel();
+        speakText(TEST_SENTENCE, char);
+      });
+      head.appendChild(dot);
+      head.appendChild(nameInput);
+      head.appendChild(testBtn);
+      if (idx === 0) {
+        const tag = document.createElement("span");
+        tag.className = "char-tag";
+        tag.textContent = "預設";
+        tag.title = "「旁白」是預設角色,不可刪除";
+        head.appendChild(tag);
+      } else {
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "btn btn-small";
+        delBtn.textContent = "✕ 刪除";
+        delBtn.addEventListener("click", () => {
+          // 指定給此角色的場景自動改回「旁白」
+          scenes.forEach((s) => { if (s.charId === char.id) s.charId = characters[0].id; });
+          characters = characters.filter((c) => c.id !== char.id);
+          saveDraft();
+          renderCharacters();
+          renderScenes();
+        });
+        head.appendChild(delBtn);
+      }
+
+      // 語音(含性別標示)
+      const voiceRow = fieldRow("語音");
+      const sel = document.createElement("select");
+      sel.className = "char-voice";
+      buildVoiceOptions(sel, char.voiceURI);
+      if (voices.length) char.voiceURI = sel.value; // 草稿中的語音不存在時落到第一個
+      sel.addEventListener("change", () => { char.voiceURI = sel.value; saveDraft(); });
+      voiceRow.appendChild(sel);
+
+      // 語速 0.7x–1.4x
+      const rateRow = fieldRow("語速");
+      const rate = rangeInput(0.7, 1.4, 0.05, char.rate);
+      rate.className = "char-rate";
+      const rateVal = document.createElement("span");
+      rateVal.className = "range-val";
+      rateVal.textContent = `${char.rate}x`;
+      rate.addEventListener("input", () => {
+        char.rate = Number(rate.value);
+        rateVal.textContent = `${char.rate}x`;
+        saveDraft();
+      });
+      rateRow.appendChild(rate);
+      rateRow.appendChild(rateVal);
+
+      // 音調 0.6–1.6(調低可模擬低沉聲線)
+      const pitchRow = fieldRow("音調");
+      const pitch = rangeInput(0.6, 1.6, 0.05, char.pitch);
+      pitch.className = "char-pitch";
+      const pitchVal = document.createElement("span");
+      pitchVal.className = "range-val";
+      pitchVal.textContent = `${char.pitch}`;
+      pitch.addEventListener("input", () => {
+        char.pitch = Number(pitch.value);
+        pitchVal.textContent = `${char.pitch}`;
+        saveDraft();
+      });
+      pitchRow.appendChild(pitch);
+      pitchRow.appendChild(pitchVal);
+
+      // 代表色
+      const colorRow = document.createElement("div");
+      colorRow.className = "char-colors";
+      const colorLabel = document.createElement("span");
+      colorLabel.className = "option-label";
+      colorLabel.textContent = "代表色";
+      colorRow.appendChild(colorLabel);
+      CHAR_COLORS.forEach((c) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "char-swatch" + (c === char.color ? " selected" : "");
+        b.style.background = c;
+        b.setAttribute("aria-label", "選擇代表色");
+        b.addEventListener("click", () => {
+          char.color = c;
+          saveDraft();
+          renderCharacters();
+          renderScenes();
+        });
+        colorRow.appendChild(b);
+      });
+
+      li.appendChild(head);
+      li.appendChild(voiceRow);
+      li.appendChild(rateRow);
+      li.appendChild(pitchRow);
+      li.appendChild(colorRow);
+      listEl.appendChild(li);
+    });
+  }
+
+  $("add-char-btn").addEventListener("click", () => {
+    showError("char-error", "");
+    if (characters.length >= MAX_CHARS) {
+      showError("char-error", `角色最多 ${MAX_CHARS} 個,請先刪除不用的角色。`);
+      return;
+    }
+    characters.push(makeCharacter(`角色 ${characters.length + 1}`));
+    saveDraft();
+    renderCharacters();
+    renderScenes();
+  });
 
   // 每句語音長度估計(Ken Burns 進度與無聲模式的場景長度用)
-  function estimateDur(text) {
+  function estimateDur(text, rate) {
     const chars = text.replace(/\s+/g, "").length;
-    return Math.max(1.2, (chars * 0.22) / settings.rate);
+    return Math.max(1.2, (chars * 0.22) / (rate || 1));
   }
 
-  function speakText(text) {
+  // 用指定角色的語音/語速/音調唸一句
+  function speakText(text, char) {
     return new Promise((resolve) => {
       const u = new SpeechSynthesisUtterance(text);
-      const v = getSelectedVoice();
-      if (v) { u.voice = v; u.lang = v.lang; } else { u.lang = "zh-TW"; }
-      u.rate = settings.rate;
+      const v = charVoice(char);
+      u.lang = v ? v.lang : "zh-TW";
+      try {
+        if (v) u.voice = v;
+      } catch (e) { /* 個別瀏覽器對 voice 指派較嚴格,失敗就用預設語音 */ }
+      u.rate = char.rate;
+      u.pitch = char.pitch;
       let done = false;
       const finish = () => {
         if (done) return;
@@ -563,21 +874,11 @@
       u.onend = finish;
       u.onerror = finish;
       // 保險絲:少數語音的 onend 不觸發時,依估計長度放行
-      const guard = setTimeout(finish, estimateDur(text) * 3000 + 4000);
+      const guard = setTimeout(finish, estimateDur(text, char.rate) * 3000 + 4000);
       currentUtter = u;
       speechSynthesis.speak(u);
     });
   }
-
-  $("voice-test-btn").addEventListener("click", () => {
-    if (!ttsOk()) {
-      alert("這個瀏覽器不支援語音合成,無法試聽。");
-      return;
-    }
-    speechSynthesis.cancel();
-    const first = scenes.find((s) => s.text.trim());
-    speakText(first ? first.text.trim() : "你好,這是語音試聽,現在的語速聽起來像這樣。");
-  });
 
   // ===== 畫面繪製 =====
   function roundRect(c, x, y, w, h, r) {
@@ -759,14 +1060,15 @@
     for (let i = 0; i < list.length; i++) {
       if (!play || !play.running) break;
       const scene = list[i];
+      const char = charById(scene.charId); // 每句用指定角色的語音/語速/音調
       play.scene = scene;
       play.sceneStart = performance.now();
-      play.estDur = estimateDur(scene.text || "  ");
+      play.estDur = estimateDur(scene.text || "  ", char ? char.rate : 1);
       onSceneStart(i, list.length);
       const text = scene.text.trim();
       const start = (performance.now() - play.t0) / 1000;
-      if (text && !play.silent && ttsOk()) {
-        await speakText(text);
+      if (text && !play.silent && ttsOk() && char) {
+        await speakText(text, char);
       } else {
         // 無聲模式(或沒有文字的純圖場景):用估計長度撐場
         await abortableSleep((text ? play.estDur : 2) * 1000);
@@ -995,18 +1297,6 @@
   $("analyze-btn").addEventListener("click", analyze);
   scriptInput.addEventListener("input", saveDraft);
 
-  voiceSelect.addEventListener("change", () => {
-    settings.voiceURI = voiceSelect.value;
-    saveDraft();
-  });
-  const rateRange = $("rate-range");
-  const syncRate = () => {
-    settings.rate = Number(rateRange.value);
-    $("rate-value").textContent = `${settings.rate}x`;
-    saveDraft();
-  };
-  rateRange.addEventListener("input", syncRate);
-
   document.querySelectorAll('input[name="sub-size"]').forEach((r) => {
     r.addEventListener("change", () => { settings.subSize = r.value; saveDraft(); });
   });
@@ -1015,9 +1305,8 @@
   });
 
   restoreDraft();
+  ensureNarrator(); // 首次使用自動建立預設角色「旁白」
   // 把還原的設定套回表單
-  rateRange.value = settings.rate;
-  $("rate-value").textContent = `${settings.rate}x`;
   const sizeRadio = document.querySelector(`input[name="sub-size"][value="${settings.subSize}"]`);
   if (sizeRadio) sizeRadio.checked = true;
   const posRadio = document.querySelector(`input[name="sub-pos"][value="${settings.subPos}"]`);
@@ -1025,9 +1314,11 @@
 
   checkSupport();
   if (ttsOk()) {
-    refreshVoices();
+    refreshVoices(); // 內含 renderCharacters()
     // 部分瀏覽器第一次 getVoices() 是空的,要等 voiceschanged
     speechSynthesis.addEventListener("voiceschanged", refreshVoices);
+  } else {
+    renderCharacters();
   }
   drawIdle();
 })();
