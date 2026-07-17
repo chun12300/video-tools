@@ -109,9 +109,21 @@
 - 場景時長 = 該句 utterance `onend` 的實際時間 + 0.4s 緩衝;utterance 要存進
   變數防 GC,另設估計長度 ×3 + 4s 的保險絲 timeout。記錄每句相對錄製起點的
   起訖秒數產生 SRT(下載加 BOM)。
-- **一句多圖(分鏡)**:場景素材是 `scene.media[]`(上限 3,`{id,image,thumb,crop}`),
-  多張時把該句進度平均切段、依序硬切(index=floor(p×n)),每張各自跑運鏡;
-  場景卡片用 `<details>` 摺疊收納素材與運鏡(`scene.advOpen` 記住開合,重繪保留)。
+- **一句多素材(分鏡)**:`scene.media[]`(上限 3)裝圖片 `{kind:"image",image,thumb,crop}`
+  或影片 `{kind:"video",videoEl,videoUrl,thumb}`,多個時把該句進度平均切段、依序硬切
+  (index=floor(p×n)),圖片各自跑運鏡;場景卡片用 `<details>` 摺疊收納素材/運鏡/音效
+  (`scene.advOpen` 記住開合,重繪保留)。
+- **影片素材**:mp4/webm ≤50MB,靜音、cover 置中裁滿、不裁剪不運鏡;
+  `loop=true` 補滿語音長度、切段時 `currentTime=0` 從頭播(drawScene 內驅動
+  `play.activeVideo`),blob URL 在素材存活期間不 revoke,刪素材時才釋放。
+- **三層混音**:單一 `AudioContext`(`getAudioCtx`,首次手勢時建立);
+  場景音效 `scene.sfx{name,buffer,volume}`(≤5MB,預設 60%,場景始播終停)與
+  BGM(≤15MB,loop,預設 25%,`duckBgm` 有語音時降至 40%、0.5s 恢復,結尾淡出 1s)
+  走 BufferSource+Gain 進 `setupAudio` 的 out;預覽接 destination,
+  錄製接 `MediaStreamAudioDestinationNode` 並把分頁音訊(TTS)用
+  `createMediaStreamSource` 混進同一條音軌(MediaRecorder 只錄第一條音軌,
+  錄製時音效/BGM 不出喇叭以免被分頁音訊重複收音);沒有音效/BGM 時維持
+  原本的分頁音訊直通路徑。音訊 buffer 不進 localStorage 草稿。
 - **場景圖片可裁剪**:彈窗內 9:16 鎖比例裁剪框(Pointer Events,滑鼠/觸控通用;
   拖曳移動、四角縮放、框外 box-shadow 遮罩),每個素材只存裁剪座標 `item.crop`
   (原圖座標 x,y,w,h),原圖保留可重調;預設=置中最大 9:16(`defaultCrop`)。

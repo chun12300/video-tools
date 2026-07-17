@@ -1184,6 +1184,60 @@ legend {
 
 .media-add { align-self: center; }
 
+.media-cell { position: relative; }
+
+.media-video-badge {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  padding: 0 4px;
+  pointer-events: none;
+}
+
+/* ---- 場景音效 / BGM ---- */
+.sfx-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 4px 0 12px;
+}
+
+.sfx-name {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+
+.sfx-vol {
+  flex: 1;
+  min-width: 100px;
+  accent-color: var(--accent);
+}
+
+.bgm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.bgm-name {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+
 .scene-actions .btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
