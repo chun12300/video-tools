@@ -22,7 +22,11 @@
   const FONT_STACK = '"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif';
   const SUB_SIZES = { large: 76, medium: 60, small: 46 };
   const MAX_CHARS = 6;           // 語音角色上限
-  const MAX_MEDIA = 3;           // 每個場景的素材(圖片)上限
+  const MAX_MEDIA = 3;           // 每個場景的素材上限
+  const SFX_MAX_BYTES = 5 * 1024 * 1024;    // 場景音效上限 5MB
+  const BGM_MAX_BYTES = 15 * 1024 * 1024;   // 背景音樂上限 15MB
+  const VIDEO_MAX_BYTES = 50 * 1024 * 1024; // 影片素材上限 50MB
+  const DUCK_RATIO = 0.4;        // 有語音時 BGM 降到設定音量的 40%
   const MOTIONS = {              // 場景運鏡選項
     zoom: "緩慢放大",
     push: "快速推進",
@@ -46,6 +50,9 @@
   let play = null;        // 播放/錄製狀態,null = 閒置
   let currentUtter = null; // 防止 utterance 被 GC 導致 onend 不觸發
   let lastUrls = [];      // 上一次結果的 object URL,重生成時釋放
+  let audioCtx = null;    // 共用的 AudioContext(音效/BGM/錄製混音都用它)
+  let sfxPreview = null;  // 進行中的音效試聽
+  const bgm = { name: "", buffer: null, volume: 0.25 }; // 背景音樂(記憶體,不進草稿)
 
   const settings = { subSize: "medium", subPos: "bottom" };
 
@@ -61,6 +68,28 @@
   };
 
   const ttsOk = () => "speechSynthesis" in window;
+
+  // ===== 音訊基礎(單一 AudioContext,三層音源共用)=====
+  function getAudioCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+
+  async function decodeAudioFile(file, maxBytes, label) {
+    if (!file.type.startsWith("audio/") && !/\.(mp3|wav|ogg)$/i.test(file.name)) {
+      throw new Error("請選擇 mp3 / wav / ogg 音訊檔");
+    }
+    if (file.size > maxBytes) {
+      throw new Error(`${label}檔案不能超過 ${Math.round(maxBytes / 1024 / 1024)} MB`);
+    }
+    const buf = await file.arrayBuffer();
+    try {
+      return await getAudioCtx().decodeAudioData(buf);
+    } catch (e) {
+      throw new Error("瀏覽器無法解碼這個音訊檔");
+    }
+  }
 
   // ===== 相容性偵測 =====
   function checkSupport() {
@@ -228,8 +257,11 @@
     ensureNarrator();
     return {
       id: uid, text, hue: (uid * 53) % 360,
-      media: [],          // 1~3 個素材 { id, image, thumb, crop },多張時語音時間平均分配硬切
-      motion: "zoom",     // 運鏡(套用到該場景所有素材)
+      media: [],          // 1~3 個素材,多個時語音時間平均分配硬切:
+                          //   圖片 { id, kind:"image", image, thumb, crop }
+                          //   影片 { id, kind:"video", videoEl, videoUrl, thumb }(靜音、cover、不運鏡)
+      motion: "zoom",     // 運鏡(套用到該場景所有圖片素材)
+      sfx: null,          // 場景音效 { name, buffer(AudioBuffer), volume 0~1 }
       advOpen: false,     // 「素材與運鏡」摺疊狀態(重繪時保留)
       charId: charId || characters[0].id,
     };
@@ -409,9 +441,18 @@
         const mimg = document.createElement("img");
         mimg.className = "media-thumb";
         mimg.src = item.thumb;
-        mimg.alt = `素材 ${mi + 1}(點擊裁剪)`;
-        mimg.title = "點擊裁剪這張圖";
-        mimg.addEventListener("click", () => openCropModal(item));
+        if (item.kind === "video") {
+          mimg.alt = `素材 ${mi + 1}(影片)`;
+          mimg.title = "影片素材:靜音、置中裁滿,不需裁剪;比語音短會循環播放";
+          const vbadge = document.createElement("span");
+          vbadge.className = "media-video-badge";
+          vbadge.textContent = "🎞";
+          cell.appendChild(vbadge);
+        } else {
+          mimg.alt = `素材 ${mi + 1}(點擊裁剪)`;
+          mimg.title = "點擊裁剪這張圖";
+          mimg.addEventListener("click", () => openCropModal(item));
+        }
         const ctrl = document.createElement("div");
         ctrl.className = "media-ctrl";
         const mbtn = (mact, label, title, disabled) => {
@@ -433,14 +474,15 @@
         mediaRow.appendChild(cell);
       });
       if (scene.media.length < MAX_MEDIA) {
-        const addBtn = btn("addimg", "＋ 加圖片", `一個場景最多 ${MAX_MEDIA} 張圖`);
+        const addBtn = btn("addimg", "＋ 加素材", `圖片或影片片段(mp4/webm ≤50MB),一個場景最多 ${MAX_MEDIA} 個`);
         addBtn.classList.add("media-add");
         mediaRow.appendChild(addBtn);
       }
       adv.appendChild(mediaRow);
       const advHint = document.createElement("p");
       advHint.className = "list-hint";
-      advHint.textContent = "多張圖時,該句語音時間平均分給每張、依序硬切(分鏡感);點縮圖可個別裁剪。";
+      advHint.textContent = "多個素材時,語音時間平均分配、依序硬切(分鏡感);圖片點縮圖可個別裁剪," +
+        "影片素材靜音置中裁滿、比語音短會循環、不套運鏡。";
       adv.appendChild(advHint);
 
       const motionRow = document.createElement("div");
@@ -463,6 +505,43 @@
       motionRow.appendChild(mLabel);
       motionRow.appendChild(mSel);
       adv.appendChild(motionRow);
+
+      // 場景音效:場景開始播放、結束停止,與語音/BGM 混音
+      const sfxRow = document.createElement("div");
+      sfxRow.className = "sfx-row";
+      if (scene.sfx) {
+        const name = document.createElement("span");
+        name.className = "sfx-name";
+        name.textContent = `🔊 ${scene.sfx.name}`;
+        name.title = scene.sfx.name;
+        const vol = document.createElement("input");
+        vol.type = "range";
+        vol.min = 0;
+        vol.max = 100;
+        vol.step = 1;
+        vol.value = Math.round(scene.sfx.volume * 100);
+        vol.className = "sfx-vol";
+        vol.title = "音效音量";
+        const volVal = document.createElement("span");
+        volVal.className = "range-val";
+        volVal.textContent = `${Math.round(scene.sfx.volume * 100)}%`;
+        vol.addEventListener("input", () => {
+          scene.sfx.volume = Number(vol.value) / 100;
+          volVal.textContent = `${vol.value}%`;
+        });
+        sfxRow.appendChild(name);
+        sfxRow.appendChild(vol);
+        sfxRow.appendChild(volVal);
+        sfxRow.appendChild(btn("sfxtest", "▶ 試聽"));
+        sfxRow.appendChild(btn("sfxdel", "✕"));
+      } else {
+        sfxRow.appendChild(btn("addsfx", "🔊 上傳音效", "mp3 / wav / ogg,上限 5MB"));
+        const sfxHint = document.createElement("span");
+        sfxHint.className = "scene-kind";
+        sfxHint.textContent = "場景開始播放、結束自動停止";
+        sfxRow.appendChild(sfxHint);
+      }
+      adv.appendChild(sfxRow);
 
       body.appendChild(head);
       body.appendChild(ta);
@@ -492,6 +571,7 @@
       } else if (mact === "mright" && mi < scene.media.length - 1) {
         [scene.media[mi + 1], scene.media[mi]] = [scene.media[mi], scene.media[mi + 1]];
       } else if (mact === "mdel") {
+        releaseMediaItem(scene.media[mi]);
         scene.media.splice(mi, 1);
       }
       renderScenes();
@@ -502,6 +582,20 @@
     const idx = scenes.findIndex((s) => s.id === Number(li.dataset.id));
     if (idx < 0) return;
     const act = b.dataset.act;
+    if (act === "addsfx") {
+      pendingSfxSceneId = scenes[idx].id;
+      $("scene-sfx-input").click();
+      return;
+    }
+    if (act === "sfxtest") {
+      playSfxPreview(scenes[idx]);
+      return;
+    }
+    if (act === "sfxdel") {
+      scenes[idx].sfx = null;
+      renderScenes();
+      return;
+    }
     if (act === "up" && idx > 0) {
       [scenes[idx - 1], scenes[idx]] = [scenes[idx], scenes[idx - 1]];
     } else if (act === "down" && idx < scenes.length - 1) {
@@ -527,14 +621,53 @@
     if (!file || !scene) return;
     showError("step2-error", "");
     try {
-      if (scene.media.length >= MAX_MEDIA) throw new Error(`一個場景最多 ${MAX_MEDIA} 張圖`);
-      scene.media.push(await loadMediaItem(file));
-      scene.advOpen = true; // 加完圖保持展開,方便繼續調整
+      if (scene.media.length >= MAX_MEDIA) throw new Error(`一個場景最多 ${MAX_MEDIA} 個素材`);
+      const item = file.type.startsWith("video/")
+        ? await loadVideoItem(file)
+        : await loadMediaItem(file);
+      scene.media.push(item);
+      scene.advOpen = true; // 加完素材保持展開,方便繼續調整
       renderScenes();
     } catch (e) {
-      showError("step2-error", `圖片讀取失敗:${e.message || "不明錯誤"},請換一張圖片試試。`);
+      showError("step2-error", `素材讀取失敗:${e.message || "不明錯誤"},請換一個檔案試試。`);
     }
   });
+
+  // 場景音效上傳
+  let pendingSfxSceneId = null;
+  $("scene-sfx-input").addEventListener("change", async (ev) => {
+    const file = ev.target.files[0];
+    ev.target.value = "";
+    const scene = scenes.find((s) => s.id === pendingSfxSceneId);
+    pendingSfxSceneId = null;
+    if (!file || !scene) return;
+    showError("step2-error", "");
+    try {
+      scene.sfx = { name: file.name, buffer: await decodeAudioFile(file, SFX_MAX_BYTES, "音效"), volume: 0.6 };
+      scene.advOpen = true;
+      renderScenes();
+    } catch (e) {
+      showError("step2-error", `音效讀取失敗:${e.message || "不明錯誤"}`);
+    }
+  });
+
+  // 音效試聽(共用 AudioContext,再按一次會蓋掉前一次)
+  function playSfxPreview(scene) {
+    const ctxA = getAudioCtx();
+    if (sfxPreview) {
+      try { sfxPreview.stop(); } catch (e) { /* 已停 */ }
+      sfxPreview = null;
+    }
+    if (!scene.sfx || !scene.sfx.buffer) return;
+    const src = ctxA.createBufferSource();
+    src.buffer = scene.sfx.buffer;
+    const g = ctxA.createGain();
+    g.gain.value = scene.sfx.volume;
+    src.connect(g);
+    g.connect(ctxA.destination);
+    src.start();
+    sfxPreview = src;
+  }
 
   function loadImg(url) {
     return new Promise((resolve, reject) => {
@@ -567,11 +700,53 @@
         h = c.height;
       }
       mediaUid += 1;
-      const item = { id: mediaUid, image: source, thumb: null, crop: defaultCrop(w, h) };
+      const item = { id: mediaUid, kind: "image", image: source, thumb: null, crop: defaultCrop(w, h) };
       makeThumb(item);
       return item;
     } finally {
       URL.revokeObjectURL(url);
+    }
+  }
+
+  // 影片素材:靜音、cover 置中裁滿、不套運鏡;短於語音會循環、長了會被切掉
+  async function loadVideoItem(file) {
+    if (file.size > VIDEO_MAX_BYTES) {
+      throw new Error(`影片素材不能超過 ${Math.round(VIDEO_MAX_BYTES / 1024 / 1024)} MB`);
+    }
+    const url = URL.createObjectURL(file); // 素材存活期間都要播放,不 revoke
+    const el = document.createElement("video");
+    el.muted = true;
+    el.playsInline = true;
+    el.loop = true;      // 片段比語音短時自動循環補滿
+    el.preload = "auto";
+    try {
+      await new Promise((res, rej) => {
+        el.onloadeddata = res;
+        el.onerror = () => rej(new Error("瀏覽器無法解碼這個影片(建議用 MP4/H.264 或 WebM)"));
+        el.src = url;
+      });
+      const vw = el.videoWidth;
+      const vh = el.videoHeight;
+      if (!vw || !vh) throw new Error("讀不到影片畫面尺寸");
+      const t = document.createElement("canvas");
+      t.width = 72;
+      t.height = 128;
+      const tc = t.getContext("2d");
+      const s = Math.max(t.width / vw, t.height / vh);
+      tc.drawImage(el, (t.width - vw * s) / 2, (t.height - vh * s) / 2, vw * s, vh * s);
+      mediaUid += 1;
+      return { id: mediaUid, kind: "video", videoEl: el, videoUrl: url, thumb: t.toDataURL("image/jpeg", 0.75) };
+    } catch (e) {
+      URL.revokeObjectURL(url);
+      throw e;
+    }
+  }
+
+  function releaseMediaItem(item) {
+    if (item.kind === "video") {
+      item.videoEl.pause();
+      item.videoEl.removeAttribute("src");
+      URL.revokeObjectURL(item.videoUrl);
     }
   }
 
@@ -984,6 +1159,104 @@
     });
   }
 
+  // ===== 背景音樂(BGM)設定 =====
+  $("bgm-btn").addEventListener("click", () => $("bgm-input").click());
+  $("bgm-input").addEventListener("change", async (ev) => {
+    const file = ev.target.files[0];
+    ev.target.value = "";
+    if (!file) return;
+    showError("bgm-error", "");
+    try {
+      bgm.buffer = await decodeAudioFile(file, BGM_MAX_BYTES, "背景音樂");
+      bgm.name = file.name;
+      $("bgm-name").textContent = file.name;
+      $("bgm-remove").hidden = false;
+    } catch (e) {
+      showError("bgm-error", `背景音樂讀取失敗:${e.message || "不明錯誤"}`);
+    }
+  });
+  $("bgm-remove").addEventListener("click", () => {
+    bgm.buffer = null;
+    bgm.name = "";
+    $("bgm-name").textContent = "未設定";
+    $("bgm-remove").hidden = true;
+  });
+  $("bgm-volume").addEventListener("input", () => {
+    bgm.volume = Number($("bgm-volume").value) / 100;
+    $("bgm-volume-val").textContent = `${$("bgm-volume").value}%`;
+  });
+
+  // ===== 混音引擎(音效 + BGM;預覽出喇叭、錄製進 MediaStreamAudioDestinationNode)=====
+  function setupAudio(dest) {
+    const hasLayers = bgm.buffer || scenes.some((s) => s.sfx && s.sfx.buffer);
+    if (!hasLayers) return null;
+    const ctxA = getAudioCtx();
+    const out = ctxA.createGain();
+    out.connect(dest || ctxA.destination);
+    const a = { ctx: ctxA, out, bgm: null };
+    if (bgm.buffer) {
+      const src = ctxA.createBufferSource();
+      src.buffer = bgm.buffer;
+      src.loop = true; // 循環播放直到影片結束
+      const g = ctxA.createGain();
+      g.gain.value = bgm.volume;
+      src.connect(g);
+      g.connect(out);
+      src.start();
+      a.bgm = { src, gain: g };
+    }
+    return a;
+  }
+
+  // 自動閃避:有語音時 BGM 降到 40%,語音結束後 0.5 秒內恢復
+  function duckBgm(a, on) {
+    if (!a || !a.bgm) return;
+    const p = a.bgm.gain.gain;
+    const now = a.ctx.currentTime;
+    p.cancelScheduledValues(now);
+    p.setValueAtTime(p.value, now);
+    p.linearRampToValueAtTime(bgm.volume * (on ? DUCK_RATIO : 1), now + (on ? 0.15 : 0.5));
+  }
+
+  function startSfx(a, scene) {
+    if (!a || !scene.sfx || !scene.sfx.buffer) return null;
+    const src = a.ctx.createBufferSource();
+    src.buffer = scene.sfx.buffer;
+    const g = a.ctx.createGain();
+    g.gain.value = scene.sfx.volume;
+    src.connect(g);
+    g.connect(a.out);
+    src.start();
+    return src;
+  }
+
+  function stopSfx(src) {
+    if (!src) return;
+    try { src.stop(); } catch (e) { /* 已自然結束 */ }
+  }
+
+  function stopAudioNow(a) {
+    if (!a) return;
+    if (a.bgm) {
+      try { a.bgm.src.stop(); } catch (e) { /* 已停 */ }
+    }
+    try { a.out.disconnect(); } catch (e) { /* 已斷線 */ }
+  }
+
+  // 正常結束:BGM 淡出 1 秒再收
+  async function finishAudio(a) {
+    if (!a) return;
+    if (a.bgm) {
+      const p = a.bgm.gain.gain;
+      const now = a.ctx.currentTime;
+      p.cancelScheduledValues(now);
+      p.setValueAtTime(p.value, now);
+      p.linearRampToValueAtTime(0, now + 1);
+      await sleep(1050);
+    }
+    stopAudioNow(a);
+  }
+
   // ===== 畫面繪製 =====
   function roundRect(c, x, y, w, h, r) {
     c.beginPath();
@@ -1095,18 +1368,42 @@
     return { sx, sy, sw, sh };
   }
 
+  // 影片素材:cover 置中裁滿(不裁剪、不運鏡,本身會動)
+  function drawVideoCover(el) {
+    const vw = el.videoWidth;
+    const vh = el.videoHeight;
+    if (!vw || !vh || el.readyState < 2) return; // 還沒解碼好,維持黑畫面
+    const s = Math.max(W / vw, H / vh);
+    ctx.drawImage(el, (W - vw * s) / 2, (H - vh * s) / 2, vw * s, vh * s);
+  }
+
   function drawScene(scene, progress) {
     const p = clamp(progress, 0, 1);
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, W, H);
     if (scene.media.length) {
-      // 一句多圖:語音時間平均分給每張、依序硬切,每張各自跑運鏡
+      // 一句多素材:語音時間平均分配、依序硬切,圖片各自跑運鏡
       const n = scene.media.length;
       const idx = Math.min(Math.floor(p * n), n - 1);
       const segP = clamp(p * n - idx, 0, 1);
       const item = scene.media[idx];
-      const r = motionSourceRect(item, scene.motion, segP);
-      ctx.drawImage(item.image, r.sx, r.sy, r.sw, r.sh, 0, 0, W, H);
+      if (item.kind === "video") {
+        // 播放中才驅動影片:切到這個素材時從頭播,長了會被切、短了 loop 補滿
+        if (play && play.running && play.activeVideo !== item) {
+          if (play.activeVideo) play.activeVideo.videoEl.pause();
+          try { item.videoEl.currentTime = 0; } catch (e) { /* 尚未可 seek */ }
+          item.videoEl.play().catch(() => {});
+          play.activeVideo = item;
+        }
+        drawVideoCover(item.videoEl);
+      } else {
+        if (play && play.activeVideo) {
+          play.activeVideo.videoEl.pause();
+          play.activeVideo = null;
+        }
+        const r = motionSourceRect(item, scene.motion, segP);
+        ctx.drawImage(item.image, r.sx, r.sy, r.sw, r.sh, 0, 0, W, H);
+      }
       drawSubtitle(scene.text);
     } else {
       drawTextCard(scene);
@@ -1140,7 +1437,12 @@
   }
 
   function beginPlay(mode, silent) {
-    play = { running: true, mode, silent, scene: null, sceneStart: 0, estDur: 1, t0: 0 };
+    play = {
+      running: true, mode, silent,
+      scene: null, sceneStart: 0, estDur: 1, t0: 0,
+      audio: null,        // setupAudio() 的混音狀態(音效/BGM)
+      activeVideo: null,  // 正在播放的影片素材
+    };
     const tick = () => {
       if (!play) return;
       drawCurrent();
@@ -1159,6 +1461,10 @@
     cancelAnimationFrame(play.raf);
     clearInterval(play.timer);
     play = null;
+    // 停掉所有影片素材,避免背景繼續播放
+    scenes.forEach((s) => s.media.forEach((m) => {
+      if (m.kind === "video") m.videoEl.pause();
+    }));
     $("preview-btn").disabled = false;
     $("generate-btn").disabled = false;
     $("stop-btn").hidden = true;
@@ -1192,8 +1498,11 @@
       onSceneStart(i, list.length);
       const text = scene.text.trim();
       const start = (performance.now() - play.t0) / 1000;
+      const sfxSrc = startSfx(play.audio, scene); // 場景開始播音效
       if (text && !play.silent && ttsOk() && char) {
+        duckBgm(play.audio, true); // 有語音時 BGM 自動閃避
         await speakText(text, char);
+        duckBgm(play.audio, false);
       } else {
         // 無聲模式(或沒有文字的純圖場景):用估計長度撐場
         await abortableSleep((text ? play.estDur : 2) * 1000);
@@ -1201,6 +1510,7 @@
       const end = (performance.now() - play.t0) / 1000;
       if (text) timings.push({ text, start, end });
       await abortableSleep(SCENE_PAD_MS);
+      stopSfx(sfxSrc); // 場景結束就停,音效較長會被截斷
     }
     return timings;
   }
@@ -1218,8 +1528,12 @@
     }
     if (ttsOk()) speechSynthesis.cancel();
     beginPlay("preview", !ttsOk());
+    const audio = setupAudio(null); // 預覽也能聽到音效+BGM 混音
+    play.audio = audio;
     play.t0 = performance.now();
     await runShow(list, (i, n) => setStatus(`預覽中:第 ${i + 1} / ${n} 個場景`));
+    if (!play || !play.running) stopAudioNow(audio);
+    else await finishAudio(audio); // BGM 淡出 1 秒
     setStatus("預覽結束。");
     endPlay();
   });
@@ -1321,7 +1635,20 @@
 
     const canvasStream = stage.captureStream(30);
     const tracks = [...canvasStream.getVideoTracks()];
-    if (audioTrack) tracks.push(audioTrack);
+    // 有音效/BGM 時:分頁音訊(TTS)與 WebAudio 三層混進同一條音軌
+    // (MediaRecorder 只錄第一條音軌,不能直接放兩條)
+    const useMix = !!(bgm.buffer || scenes.some((s) => s.sfx && s.sfx.buffer));
+    let recDest = null;
+    if (useMix) {
+      const ctxA = getAudioCtx();
+      recDest = ctxA.createMediaStreamDestination();
+      if (audioTrack) {
+        ctxA.createMediaStreamSource(new MediaStream([audioTrack])).connect(recDest);
+      }
+      tracks.push(...recDest.stream.getAudioTracks());
+    } else if (audioTrack) {
+      tracks.push(audioTrack);
+    }
     const stream = new MediaStream(tracks);
 
     let rec;
@@ -1344,6 +1671,8 @@
     if (ttsOk()) speechSynthesis.cancel();
     $("result-area").hidden = true;
     beginPlay("record", silent);
+    const mixAudio = setupAudio(recDest); // 錄製時音效/BGM 只進錄音軌,不出喇叭(避免被分頁音訊重複收音)
+    play.audio = mixAudio;
     rec.onerror = () => stopPlayback(); // 編碼失敗時中止,避免卡死
     try {
       // 不等 onstart:掛在 DOM 上的 canvas 要有新畫面提交,錄影事件才會動起來,
@@ -1366,6 +1695,8 @@
     const timings = await runShow(list, setProgress);
     const cancelled = !play || !play.running;
 
+    if (cancelled) stopAudioNow(mixAudio);
+    else await finishAudio(mixAudio); // BGM 淡出 1 秒(會錄進影片結尾)
     await sleep(200); // 收尾,讓最後一格畫面確實錄進去
     if (rec.state !== "inactive") rec.stop();
     await stopped;

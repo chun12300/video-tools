@@ -51,7 +51,8 @@
       <ol id="scene-list" class="scene-list"></ol>
       <button type="button" id="add-scene-btn" class="btn">＋ 新增場景</button>
       <p id="step2-error" class="error-msg" hidden></p>
-      <input type="file" id="scene-img-input" accept="image/*" hidden>
+      <input type="file" id="scene-img-input" accept="image/*,video/mp4,video/webm" hidden>
+      <input type="file" id="scene-sfx-input" accept="audio/*,.mp3,.wav,.ogg" hidden>
       <div class="wizard-actions">
         <button type="button" class="btn" data-goto="1">← 上一步</button>
         <button type="button" class="btn btn-primary btn-inline" data-goto="3">下一步:語音與樣式 →</button>
@@ -71,6 +72,24 @@
         <ul id="char-list" class="char-list"></ul>
         <button type="button" id="add-char-btn" class="btn">＋ 新增角色</button>
         <p id="char-error" class="error-msg" hidden></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>背景音樂(BGM)</legend>
+        <div class="bgm-row">
+          <button type="button" id="bgm-btn" class="btn">🎵 上傳背景音樂</button>
+          <span id="bgm-name" class="bgm-name">未設定</span>
+          <button type="button" id="bgm-remove" class="btn btn-small" hidden>✕ 移除</button>
+        </div>
+        <div class="field-row">
+          <label for="bgm-volume">音量</label>
+          <input type="range" id="bgm-volume" min="0" max="100" step="1" value="25">
+          <span id="bgm-volume-val" class="range-val">25%</span>
+        </div>
+        <p class="list-hint">mp3 / wav / ogg,上限 15MB。BGM 會循環播放到影片結束並在結尾淡出 1 秒;
+          有語音時會自動降到設定音量的 40%(語音結束後 0.5 秒內恢復)。</p>
+        <p id="bgm-error" class="error-msg" hidden></p>
+        <input type="file" id="bgm-input" accept="audio/*,.mp3,.wav,.ogg" hidden>
       </fieldset>
 
       <fieldset>
