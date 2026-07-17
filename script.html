@@ -149,6 +149,33 @@
     </section>
   </main>
 
+  <!-- 裁剪彈窗 -->
+  <div id="crop-modal" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="裁剪圖片">
+      <div class="modal-head">
+        <h3>✂️ 裁剪圖片(9:16 直式)</h3>
+        <button type="button" id="crop-close" class="btn btn-ghost" aria-label="關閉">✕</button>
+      </div>
+      <p class="list-hint">拖曳框內可移動位置,拖曳四個角落可縮放大小;框選到的範圍就是影片畫面(所見即所得)。</p>
+      <div class="crop-area">
+        <div id="crop-stage" class="crop-stage">
+          <canvas id="crop-canvas"></canvas>
+          <div id="crop-box" class="crop-box">
+            <span class="crop-handle" data-corner="nw"></span>
+            <span class="crop-handle" data-corner="ne"></span>
+            <span class="crop-handle" data-corner="sw"></span>
+            <span class="crop-handle" data-corner="se"></span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="crop-reset" class="btn">↺ 重設</button>
+        <button type="button" id="crop-cancel" class="btn">取消</button>
+        <button type="button" id="crop-ok" class="btn btn-primary btn-inline">✔ 確定裁剪</button>
+      </div>
+    </div>
+  </div>
+
   <footer class="site-footer">
     <p>🔒 隱私優先:分句、語音合成與影片錄製都在你的瀏覽器裡完成,文字與圖片不會上傳到任何伺服器。</p>
   </footer>

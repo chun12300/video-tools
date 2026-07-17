@@ -17,12 +17,13 @@
   const SUB_MAX_CHARS = 15;      // 字幕每行最多字數
   const IMG_MAX_DIM = 4000;      // 超過就先縮小,避免記憶體問題
   const IMG_RESIZE_TO = 2560;
+  const CROP_RATIO = 9 / 16;     // 裁剪框固定比例(寬/高),與影片畫面一致
   const DRAFT_KEY = "script-video-draft-v1";
   const FONT_STACK = '"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif';
   const SUB_SIZES = { large: 76, medium: 60, small: 46 };
 
   // ===== 狀態 =====
-  let scenes = [];        // { id, text, image, thumb, hue }
+  let scenes = [];        // { id, text, image, thumb, hue, crop:{x,y,w,h}(原圖座標) }
   let uid = 0;
   let voices = [];        // 下拉選單中的語音(中文優先)
   let maxStep = 1;        // 已到達過的最大步驟(導覽列解鎖用)
@@ -131,7 +132,34 @@
 
   function makeScene(text) {
     uid += 1;
-    return { id: uid, text, image: null, thumb: null, hue: (uid * 53) % 360 };
+    return { id: uid, text, image: null, thumb: null, hue: (uid * 53) % 360, crop: null };
+  }
+
+  function imgSize(img) {
+    return { w: img.width || img.naturalWidth, h: img.height || img.naturalHeight };
+  }
+
+  // 置中的最大 9:16 裁剪範圍(橫圖:高度全用;直圖:寬度全用)
+  function defaultCrop(w, h) {
+    const cw = Math.min(w, h * CROP_RATIO);
+    const ch = cw / CROP_RATIO;
+    return { x: (w - cw) / 2, y: (h - ch) / 2, w: cw, h: ch };
+  }
+
+  function sceneCrop(scene) {
+    if (scene.crop) return scene.crop;
+    const { w, h } = imgSize(scene.image);
+    return defaultCrop(w, h);
+  }
+
+  // 依裁剪範圍重畫場景縮圖(直式 9:16)
+  function makeThumb(scene) {
+    const crop = sceneCrop(scene);
+    const t = document.createElement("canvas");
+    t.width = 72;
+    t.height = 128;
+    t.getContext("2d").drawImage(scene.image, crop.x, crop.y, crop.w, crop.h, 0, 0, t.width, t.height);
+    scene.thumb = t.toDataURL("image/jpeg", 0.75);
   }
 
   function analyze() {
@@ -171,8 +199,15 @@
       if (scene.thumb) {
         const img = document.createElement("img");
         img.src = scene.thumb;
-        img.alt = "場景圖片縮圖";
+        img.alt = "場景圖片縮圖(點擊可裁剪)";
         thumb.appendChild(img);
+        const badge = document.createElement("span");
+        badge.className = "thumb-crop-badge";
+        badge.textContent = "✂️";
+        thumb.appendChild(badge);
+        thumb.classList.add("has-img");
+        thumb.title = "點擊裁剪圖片";
+        thumb.addEventListener("click", () => openCropModal(scene));
       } else {
         thumb.textContent = "文字卡";
         thumb.style.background =
@@ -209,6 +244,7 @@
       actions.appendChild(btn("up", "↑", "上移", i === 0));
       actions.appendChild(btn("down", "↓", "下移", i === scenes.length - 1));
       actions.appendChild(btn("img", scene.image ? "🖼 換圖片" : "🖼 上傳圖片"));
+      if (scene.image) actions.appendChild(btn("crop", "✂️ 裁剪", "框選要出現在影片裡的範圍"));
       if (scene.image) actions.appendChild(btn("rmimg", "移除圖片"));
       actions.appendChild(btn("merge", "⤵ 併入下一句", "把下一個場景的文字併進這個場景", i === scenes.length - 1));
       actions.appendChild(btn("del", "✕ 刪除"));
@@ -247,6 +283,10 @@
     } else if (act === "rmimg") {
       scenes[idx].image = null;
       scenes[idx].thumb = null;
+      scenes[idx].crop = null;
+    } else if (act === "crop") {
+      openCropModal(scenes[idx]);
+      return; // 彈窗關閉時才重繪
     }
     renderScenes();
   });
@@ -296,14 +336,8 @@
         h = c.height;
       }
       scene.image = source;
-      // 縮圖(直式 9:16,cover 裁切)
-      const t = document.createElement("canvas");
-      t.width = 72;
-      t.height = 128;
-      const tc = t.getContext("2d");
-      const s = Math.max(t.width / w, t.height / h);
-      tc.drawImage(source, (t.width - w * s) / 2, (t.height - h * s) / 2, w * s, h * s);
-      scene.thumb = t.toDataURL("image/jpeg", 0.75);
+      scene.crop = defaultCrop(w, h); // 預設:置中的最大 9:16 範圍
+      makeThumb(scene);
     } finally {
       URL.revokeObjectURL(url);
     }
@@ -313,6 +347,154 @@
     scenes.push(makeScene(""));
     renderScenes();
     sceneListEl.lastElementChild.querySelector(".scene-text").focus();
+  });
+
+  // ===== 裁剪彈窗 =====
+  // 只儲存「裁剪座標」(相對原圖的 x,y,w,h),原圖保留在記憶體中,可隨時重調
+  const cropModal = $("crop-modal");
+  const cropStage = $("crop-stage");
+  const cropCanvas = $("crop-canvas");
+  const cropBoxEl = $("crop-box");
+  const CROP_MIN_W = 48; // 顯示座標下的裁剪框最小寬度(px)
+  let cropState = null;  // { scene, scale, dispW, dispH, box:{x,y,w,h}(顯示座標) }
+  let cropDrag = null;   // 進行中的拖曳 { mode:"move"|角落, startX, startY, startBox }
+
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+  function openCropModal(scene) {
+    if (!scene.image) return;
+    const { w, h } = imgSize(scene.image);
+    cropModal.hidden = false;
+    // 原圖等比縮小到適合彈窗:寬度塞進內容區、高度不超過視窗 55%
+    const areaW = Math.max(cropStage.parentElement.clientWidth, 200);
+    const maxH = Math.max(240, window.innerHeight * 0.55);
+    const scale = Math.min(areaW / w, maxH / h);
+    const dispW = Math.max(1, Math.round(w * scale));
+    const dispH = Math.max(1, Math.round(h * scale));
+    cropCanvas.width = dispW;
+    cropCanvas.height = dispH;
+    cropCanvas.getContext("2d").drawImage(scene.image, 0, 0, dispW, dispH);
+    const crop = sceneCrop(scene); // 從上次的範圍繼續調
+    cropState = {
+      scene, scale, dispW, dispH,
+      box: { x: crop.x * scale, y: crop.y * scale, w: crop.w * scale, h: crop.h * scale },
+    };
+    clampCropBox();
+    applyCropBox();
+  }
+
+  function closeCropModal() {
+    cropModal.hidden = true;
+    cropState = null;
+    cropDrag = null;
+  }
+
+  function clampCropBox() {
+    const b = cropState.box;
+    b.w = clamp(b.w, Math.min(CROP_MIN_W, cropState.dispW), Math.min(cropState.dispW, cropState.dispH * CROP_RATIO));
+    b.h = b.w / CROP_RATIO;
+    b.x = clamp(b.x, 0, cropState.dispW - b.w);
+    b.y = clamp(b.y, 0, cropState.dispH - b.h);
+  }
+
+  function applyCropBox() {
+    const b = cropState.box;
+    cropBoxEl.style.left = `${b.x}px`;
+    cropBoxEl.style.top = `${b.y}px`;
+    cropBoxEl.style.width = `${b.w}px`;
+    cropBoxEl.style.height = `${b.h}px`;
+  }
+
+  cropBoxEl.addEventListener("pointerdown", (ev) => {
+    if (!cropState) return;
+    ev.preventDefault();
+    cropDrag = {
+      mode: (ev.target.dataset && ev.target.dataset.corner) || "move",
+      startX: ev.clientX,
+      startY: ev.clientY,
+      startBox: { ...cropState.box },
+    };
+    cropBoxEl.setPointerCapture(ev.pointerId);
+  });
+
+  cropBoxEl.addEventListener("pointermove", (ev) => {
+    if (!cropDrag || !cropState) return;
+    const b = cropState.box;
+    const s = cropDrag.startBox;
+    if (cropDrag.mode === "move") {
+      b.x = clamp(s.x + (ev.clientX - cropDrag.startX), 0, cropState.dispW - s.w);
+      b.y = clamp(s.y + (ev.clientY - cropDrag.startY), 0, cropState.dispH - s.h);
+    } else {
+      resizeCropBox(cropDrag.mode, ev);
+    }
+    applyCropBox();
+  });
+
+  const endCropDrag = () => { cropDrag = null; };
+  cropBoxEl.addEventListener("pointerup", endCropDrag);
+  cropBoxEl.addEventListener("pointercancel", endCropDrag);
+
+  // 以對角為錨點縮放,維持 9:16、不超出圖片範圍
+  function resizeCropBox(corner, ev) {
+    const s = cropDrag.startBox;
+    const left = corner.includes("w");   // 往左延伸(錨點在右)
+    const up = corner.includes("n");     // 往上延伸(錨點在下)
+    const ax = left ? s.x + s.w : s.x;
+    const ay = up ? s.y + s.h : s.y;
+    const rect = cropStage.getBoundingClientRect();
+    const px = ev.clientX - rect.left;
+    const py = ev.clientY - rect.top;
+    const dx = left ? ax - px : px - ax;
+    const dy = up ? ay - py : py - ay;
+    const availW = left ? ax : cropState.dispW - ax;
+    const availH = up ? ay : cropState.dispH - ay;
+    let w = Math.max(dx, dy * CROP_RATIO, CROP_MIN_W);
+    w = Math.min(w, availW, availH * CROP_RATIO); // 邊界優先,必要時小於最小尺寸
+    const h = w / CROP_RATIO;
+    const b = cropState.box;
+    b.w = w;
+    b.h = h;
+    b.x = left ? ax - w : ax;
+    b.y = up ? ay - h : ay;
+  }
+
+  $("crop-ok").addEventListener("click", () => {
+    if (!cropState) return;
+    const { scene, scale, box } = cropState;
+    const { w, h } = imgSize(scene.image);
+    const crop = { x: box.x / scale, y: box.y / scale, w: box.w / scale, h: box.h / scale };
+    // 換算回原圖座標後再收斂一次,避免縮放誤差超出圖片
+    crop.w = Math.min(crop.w, w);
+    crop.h = crop.w / CROP_RATIO;
+    if (crop.h > h) {
+      crop.h = h;
+      crop.w = crop.h * CROP_RATIO;
+    }
+    crop.x = clamp(crop.x, 0, w - crop.w);
+    crop.y = clamp(crop.y, 0, h - crop.h);
+    scene.crop = crop;
+    makeThumb(scene);
+    closeCropModal();
+    renderScenes();
+  });
+
+  $("crop-reset").addEventListener("click", () => {
+    if (!cropState) return;
+    const { w, h } = imgSize(cropState.scene.image);
+    const d = defaultCrop(w, h);
+    const k = cropState.scale;
+    cropState.box = { x: d.x * k, y: d.y * k, w: d.w * k, h: d.h * k };
+    clampCropBox();
+    applyCropBox();
+  });
+
+  $("crop-cancel").addEventListener("click", closeCropModal);
+  $("crop-close").addEventListener("click", closeCropModal);
+  cropModal.addEventListener("click", (ev) => {
+    if (ev.target === cropModal) closeCropModal(); // 點遮罩=取消
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && cropState) closeCropModal();
   });
 
   // ===== 步驟 3:語音 =====
@@ -483,19 +665,22 @@
     paintLines(lines, H * 0.45, px, false);
   }
 
-  // 圖片 cover 置中裁切,scale 疊加 Ken Burns 放大
-  function drawCover(img, scale) {
-    const iw = img.width || img.naturalWidth;
-    const ih = img.height || img.naturalHeight;
-    const s = Math.max(W / iw, H / ih) * scale;
-    ctx.drawImage(img, (W - iw * s) / 2, (H - ih * s) / 2, iw * s, ih * s);
+  // 把裁剪範圍畫滿整個畫面(9:16 對 9:16,不變形);
+  // Ken Burns 放大 = 以裁剪範圍中心往內縮小取樣區(drawImage 九參數版)
+  function drawSceneImage(scene, kbScale) {
+    const crop = sceneCrop(scene);
+    const sw = crop.w / kbScale;
+    const sh = crop.h / kbScale;
+    const sx = crop.x + (crop.w - sw) / 2;
+    const sy = crop.y + (crop.h - sh) / 2;
+    ctx.drawImage(scene.image, sx, sy, sw, sh, 0, 0, W, H);
   }
 
   function drawScene(scene, progress) {
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, W, H);
     if (scene.image) {
-      drawCover(scene.image, 1 + KEN_BURNS * Math.min(Math.max(progress, 0), 1));
+      drawSceneImage(scene, 1 + KEN_BURNS * Math.min(Math.max(progress, 0), 1));
       drawSubtitle(scene.text);
     } else {
       drawTextCard(scene);
