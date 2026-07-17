@@ -10,6 +10,7 @@
 - **影片轉 GIF**(`gif.html` + `gif.js`):剪一段影片轉成 GIF
 - **語音辨識字幕**(`subtitle.html` + `subtitle.js`):Whisper 辨識 → 逐句編輯 → SRT / 燒進影片
 - **發佈準備包**(`publish.html` + `publish.js`):直式版本、封面截圖、SRT、文案提示詞
+- **腳本轉影片**(`script.html` + `script.js`):文案分句 → 配圖 → TTS 旁白 → 直式短影片 + SRT
 
 ## 核心原則(修改程式時必須遵守)
 
@@ -27,6 +28,8 @@
 - `subtitle.html` / `subtitle.js` — 語音辨識字幕(辨識、編輯、SRT、燒錄)
 - `publish.html` / `publish.js` — 發佈準備包(直式轉換、封面、SRT、文案提示詞;
   不在首頁選單,從合併/字幕工具的完成畫面進入,亦可直接開頁選檔)
+- `script.html` / `script.js` — 腳本轉影片(4 步驟精靈:貼腳本分句 → 場景配圖 →
+  語音/字幕設定 → canvas 預覽與錄製輸出 WebM + SRT;不用 ffmpeg.wasm)
 - `ffmpeg-loader.js` — 共用的 ffmpeg.wasm CDN 載入模組(`window.FFmpegLoader`)
 - `style.css` — 深色主題樣式,響應式(以桌面為主)
 
@@ -92,6 +95,29 @@
   家族名「Noto Sans TC」。SRT 匯出下載加 BOM,燒錄用的不加。
 - 「合併 → 生成字幕」交接:merge.js 把結果 blob 放進 IndexedDB(`video-tools`
   資料庫的 `handoff` store),subtitle.html?from=merge 讀出後即刪。
+
+### 腳本轉影片(script.js)的設計
+
+- **不用 ffmpeg.wasm**:畫面用 canvas(1080×1920)逐場景繪製,
+  `canvas.captureStream(30)` + MediaRecorder 輸出 WebM(vp9→vp8→預設依序嘗試)。
+- **TTS 錄音靠分頁音訊分享**:speechSynthesis 的聲音無法被 MediaRecorder 直接擷取,
+  生成時用 `getDisplayMedia({video, audio, preferCurrentTab, systemAudio:"include"})`
+  引導使用者分享「目前分頁+分頁音訊」,取音訊軌與 canvas 影像軌合併錄製;
+  拒絕/失敗/瀏覽器不支援時退回無聲模式(不發聲,場景長度改用字數估計:
+  每字 0.22 秒 ÷ 語速,下限 1.2 秒)。部分系統的本機語音不進分頁音訊,
+  UI 有提示可改分享「整個畫面+系統音訊」。
+- 場景時長 = 該句 utterance `onend` 的實際時間 + 0.4s 緩衝;utterance 要存進
+  變數防 GC,另設估計長度 ×3 + 4s 的保險絲 timeout。記錄每句相對錄製起點的
+  起訖秒數產生 SRT(下載加 BOM)。
+- 有圖場景:cover 置中裁切 + Ken Burns(1.0→1.08,進度用估計時長算)+
+  字幕(白字+黑描邊+半透明黑底,每行約 15 字換行,大小/位置可調);
+  無圖場景:hue 漸層背景+置中大字文字卡(字多自動縮小,**不再疊小字幕**,SRT 照出)。
+- 圖片 >4000px 先縮到 2560 再用(記憶體);`getVoices()` 要等 `voiceschanged`,
+  中文語音排序 zh-TW → zh-Hant → zh-HK → 其他 zh。
+- 預覽與錄製共用同一個播放引擎(rAF 繪製 + 100ms interval 備援,
+  分頁被遮住時 rAF 會停);錄製期間必須保持分頁在前景。
+- 文案與設定(語音/語速/字幕樣式)存 localStorage(`script-video-draft-v1`);
+  場景與圖片不持久化。
 
 ### 發佈準備包(publish.js)的設計
 

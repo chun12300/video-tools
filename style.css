@@ -961,6 +961,263 @@ legend {
   pointer-events: none;
 }
 
+/* ---- 腳本轉影片 ---- */
+.wizard-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 24px 0;
+  flex-wrap: wrap;
+}
+
+.wizard-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  padding: 7px 16px 7px 8px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background-color 0.15s;
+}
+
+.wizard-step:hover:not(:disabled) { border-color: var(--accent); }
+
+.wizard-step:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.wizard-step.is-active {
+  border-color: var(--accent);
+  color: var(--text);
+  background: rgba(91, 140, 255, 0.08);
+}
+
+.wizard-step .step-num {
+  width: 22px;
+  height: 22px;
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.script-input {
+  width: 100%;
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  resize: vertical;
+  margin-top: 8px;
+}
+
+.script-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.scene-list {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scene-card {
+  display: flex;
+  gap: 12px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.scene-thumb {
+  width: 72px;
+  height: 128px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.scene-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.scene-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scene-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scene-kind {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.scene-text {
+  width: 100%;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.scene-text:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.scene-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.scene-actions .btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  flex-wrap: wrap;
+}
+
+.field-row label {
+  width: 48px;
+  flex-shrink: 0;
+  font-size: 0.9rem;
+}
+
+.field-row select {
+  flex: 1;
+  min-width: 200px;
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
+.field-row input[type="range"] {
+  flex: 1;
+  min-width: 140px;
+  accent-color: var(--accent);
+}
+
+.canvas-wrap {
+  display: flex;
+  justify-content: center;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+#stage {
+  height: 52vh;
+  max-height: 560px;
+  width: auto;
+  max-width: 100%;
+  border-radius: 8px;
+  background: #000;
+}
+
+.howto-box {
+  margin-top: 20px;
+  border: 1px solid rgba(255, 201, 92, 0.3);
+  background: rgba(255, 201, 92, 0.06);
+  border-radius: 10px;
+  padding: 14px 18px;
+  font-size: 0.88rem;
+}
+
+.howto-box h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: var(--warn);
+}
+
+.howto-box p {
+  margin: 8px 0 0;
+  color: var(--text-dim);
+}
+
+.howto-box ol {
+  margin: 8px 0 0;
+  padding-left: 22px;
+  color: var(--text-dim);
+}
+
+.howto-box strong { color: var(--text); }
+
+.wizard-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.wizard-actions .btn-primary {
+  width: auto;
+  margin-top: 0;
+}
+
+.gen-result {
+  margin-top: 24px;
+  text-align: center;
+}
+
+.gen-result #result-video {
+  width: auto;
+  max-width: 100%;
+  max-height: 480px;
+  border-radius: 8px;
+  background: #000;
+}
+
+@media (max-width: 560px) {
+  .scene-card { flex-wrap: wrap; }
+  .wizard-actions { flex-direction: column; }
+}
+
 /* ---- 頁尾 ---- */
 .site-footer {
   text-align: center;
