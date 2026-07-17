@@ -230,7 +230,7 @@
     const { w, h } = portraitTarget();
     const ext = (currentFile.name.match(ACCEPT_RE) || [".mp4"])[0].toLowerCase();
     const inName = "input" + ext;
-    const duration = video.duration || 1;
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
 
     try {
       const ff = await getFFmpeg((msg) => setProgress(0, msg));
@@ -322,7 +322,8 @@
       v.muted = true;
       v.preload = "auto";
       v.src = videoURL;
-      v.onloadeddata = () => {
+      v.onloadeddata = async () => {
+        await ensureFiniteDuration(v);
         captureVideo = v;
         resolve(v);
       };
@@ -330,8 +331,31 @@
     });
   }
 
+  // MediaRecorder 錄出的 WebM(例如腳本轉影片的成品)沒寫入時長,
+  // duration 會是 Infinity;seek 到極大值逼瀏覽器掃出實際長度後跳回開頭
+  function ensureFiniteDuration(v) {
+    if (Number.isFinite(v.duration)) return Promise.resolve();
+    return new Promise((resolve) => {
+      let done = false;
+      const guard = setTimeout(() => finish(), 3000);
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(guard);
+        v.ondurationchange = null;
+        v.currentTime = 0;
+        resolve();
+      };
+      v.ondurationchange = () => {
+        if (Number.isFinite(v.duration)) finish();
+      };
+      try { v.currentTime = 1e9; } catch (e) { finish(); }
+    });
+  }
+
   function seekTo(v, t) {
     return new Promise((resolve) => {
+      if (!Number.isFinite(v.duration)) { resolve(); return; }
       v.onseeked = () => resolve();
       v.currentTime = Math.min(Math.max(0, t), Math.max(0, v.duration - 0.05));
     });
@@ -342,6 +366,7 @@
     thumbGrid.textContent = "";
     hideError(coverError);
     try {
+      await ensureFiniteDuration(video); // 讓播放器的進度條與時長正常
       const v = await getCaptureVideo();
       const dur = v.duration;
       for (let i = 0; i < THUMB_COUNT; i++) {

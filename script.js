@@ -52,7 +52,7 @@
   let lastUrls = [];      // 上一次結果的 object URL,重生成時釋放
   let audioCtx = null;    // 共用的 AudioContext(音效/BGM/錄製混音都用它)
   let sfxPreview = null;  // 進行中的音效試聽
-  const bgm = { name: "", buffer: null, volume: 0.25 }; // 背景音樂(記憶體,不進草稿)
+  const bgm = { name: "", buffer: null, blob: null, volume: 0.25 }; // 背景音樂
 
   const settings = { subSize: "medium", subPos: "bottom" };
 
@@ -158,6 +158,7 @@
           ({ id, name, voiceURI, rate, pitch, color }));
         localStorage.setItem(DRAFT_KEY, JSON.stringify({ text: scriptInput.value, settings, characters: chars }));
       } catch (e) { /* 空間不足時放棄暫存即可 */ }
+      scheduleProjectSave();
     }, 400);
   }
   function restoreDraft() {
@@ -187,6 +188,141 @@
         characters[0].rate = numOr(d.settings.rate, 0.7, 1.4, 1);
       }
     } catch (e) { /* 草稿壞掉就忽略 */ }
+  }
+
+  // ===== 專案自動存檔(IndexedDB,含圖片/影片/音訊的原始檔案)=====
+  // 注意:用獨立資料庫,不能動共用的 video-tools 資料庫(版本升級會弄壞其他工具)
+  function projectDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open("script-video-project", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("project");
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  let projectSaveTimer = null;
+  function scheduleProjectSave() {
+    clearTimeout(projectSaveTimer);
+    projectSaveTimer = setTimeout(() => {
+      saveProjectNow().catch(() => { /* 空間不足等問題就放棄這次自動存檔 */ });
+    }, 1500);
+  }
+
+  async function saveProjectNow() {
+    if (!scenes.length) return;
+    const data = {
+      savedAt: Date.now(),
+      text: scriptInput.value,
+      settings: { ...settings },
+      characters: characters.map(({ id, name, voiceURI, rate, pitch, color }) =>
+        ({ id, name, voiceURI, rate, pitch, color })),
+      bgm: bgm.blob ? { name: bgm.name, volume: bgm.volume, blob: bgm.blob } : null,
+      scenes: scenes.map((s) => ({
+        text: s.text,
+        hue: s.hue,
+        motion: s.motion,
+        charId: s.charId,
+        sfx: (s.sfx && s.sfx.blob) ? { name: s.sfx.name, volume: s.sfx.volume, blob: s.sfx.blob } : null,
+        voice: (s.voice && s.voice.blob) ? { blob: s.voice.blob, duration: s.voice.duration } : null,
+        media: s.media.filter((m) => m.blob).map((m) => ({ kind: m.kind, crop: m.crop || null, blob: m.blob })),
+      })),
+    };
+    const db = await projectDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("project", "readwrite");
+      tx.objectStore("project").put(data, "current");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function loadProjectRecord() {
+    const db = await projectDb();
+    return await new Promise((resolve) => {
+      const tx = db.transaction("project", "readonly");
+      const get = tx.objectStore("project").get("current");
+      get.onsuccess = () => resolve(get.result || null);
+      get.onerror = () => resolve(null);
+    });
+  }
+
+  async function deleteProjectRecord() {
+    const db = await projectDb();
+    await new Promise((resolve) => {
+      const tx = db.transaction("project", "readwrite");
+      tx.objectStore("project").delete("current");
+      tx.oncomplete = resolve;
+      tx.onerror = resolve;
+    });
+  }
+
+  // 從存檔重建整個專案(個別素材壞掉就跳過,不讓整包失敗)
+  async function restoreProject(data) {
+    if (typeof data.text === "string") scriptInput.value = data.text;
+    if (data.settings) {
+      settings.subSize = data.settings.subSize || settings.subSize;
+      settings.subPos = data.settings.subPos || settings.subPos;
+    }
+    if (Array.isArray(data.characters) && data.characters.length) {
+      characters = data.characters.slice(0, MAX_CHARS).map((c) => ({
+        id: Number(c.id) || 0,
+        name: String(c.name || "角色").slice(0, 12),
+        voiceURI: typeof c.voiceURI === "string" ? c.voiceURI : "",
+        rate: numOr(c.rate, 0.7, 1.4, 1),
+        pitch: numOr(c.pitch, 0.6, 1.6, 1),
+        color: CHAR_COLORS.includes(c.color) ? c.color : CHAR_COLORS[0],
+      }));
+      charUid = Math.max(0, ...characters.map((c) => c.id));
+    }
+    ensureNarrator();
+    if (data.bgm && data.bgm.blob) {
+      try {
+        bgm.buffer = await getAudioCtx().decodeAudioData(await data.bgm.blob.arrayBuffer());
+        bgm.name = data.bgm.name || "背景音樂";
+        bgm.blob = data.bgm.blob;
+        bgm.volume = numOr(data.bgm.volume, 0, 1, 0.25);
+        $("bgm-name").textContent = bgm.name;
+        $("bgm-remove").hidden = false;
+        $("bgm-volume").value = Math.round(bgm.volume * 100);
+        $("bgm-volume-val").textContent = `${Math.round(bgm.volume * 100)}%`;
+      } catch (e) { /* BGM 壞了就略過 */ }
+    }
+    scenes = [];
+    for (const s of data.scenes || []) {
+      const scene = makeScene(String(s.text || ""),
+        characters.some((c) => c.id === s.charId) ? s.charId : undefined);
+      scene.hue = Number.isFinite(s.hue) ? s.hue : scene.hue;
+      scene.motion = MOTIONS[s.motion] ? s.motion : "zoom";
+      for (const m of s.media || []) {
+        if (scene.media.length >= MAX_MEDIA || !m.blob) continue;
+        try {
+          const item = m.kind === "video" ? await loadVideoItem(m.blob) : await loadMediaItem(m.blob);
+          if (item.kind === "image" && m.crop) {
+            item.crop = m.crop;
+            makeThumb(item);
+          }
+          scene.media.push(item);
+        } catch (e) { /* 個別素材壞了就跳過 */ }
+      }
+      if (s.sfx && s.sfx.blob) {
+        try {
+          scene.sfx = {
+            name: s.sfx.name || "音效",
+            buffer: await getAudioCtx().decodeAudioData(await s.sfx.blob.arrayBuffer()),
+            volume: numOr(s.sfx.volume, 0, 1, 0.6),
+            blob: s.sfx.blob,
+          };
+        } catch (e) { /* 音效壞了就跳過 */ }
+      }
+      if (s.voice && s.voice.blob) {
+        try {
+          const buffer = await getAudioCtx().decodeAudioData(await s.voice.blob.arrayBuffer());
+          scene.voice = { blob: s.voice.blob, buffer, duration: buffer.duration };
+        } catch (e) { /* 錄音壞了就跳過 */ }
+      }
+      scenes.push(scene);
+    }
   }
 
   // ===== 步驟導覽 =====
@@ -397,6 +533,7 @@
         const c2 = charById(scene.charId);
         li.style.borderLeft = `4px solid ${c2.color}`;
         charSel.style.color = c2.color;
+        scheduleProjectSave();
       });
       head.appendChild(charSel);
 
@@ -405,7 +542,7 @@
       ta.rows = 2;
       ta.value = scene.text;
       ta.placeholder = "這個場景的文字(同時是字幕)";
-      ta.addEventListener("input", () => { scene.text = ta.value; });
+      ta.addEventListener("input", () => { scene.text = ta.value; scheduleProjectSave(); });
 
       const actions = document.createElement("div");
       actions.className = "scene-actions";
@@ -501,6 +638,7 @@
       mSel.addEventListener("change", () => {
         scene.motion = mSel.value;
         sum.textContent = `🎬 素材與運鏡(${scene.media.length ? `圖片×${scene.media.length}` : "文字卡"}・${MOTIONS[scene.motion]})`;
+        scheduleProjectSave();
       });
       motionRow.appendChild(mLabel);
       motionRow.appendChild(mSel);
@@ -528,6 +666,7 @@
         vol.addEventListener("input", () => {
           scene.sfx.volume = Number(vol.value) / 100;
           volVal.textContent = `${vol.value}%`;
+          scheduleProjectSave();
         });
         sfxRow.appendChild(name);
         sfxRow.appendChild(vol);
@@ -543,6 +682,27 @@
       }
       adv.appendChild(sfxRow);
 
+      // 旁白錄音:有錄音就優先用錄音,沒有才用合成語音
+      const voiceRow = document.createElement("div");
+      voiceRow.className = "sfx-row";
+      if (scene.voice) {
+        const vi = document.createElement("span");
+        vi.className = "sfx-name";
+        vi.textContent = `🎙 已錄旁白(${scene.voice.duration.toFixed(1)} 秒)`;
+        vi.title = "生成時會用這段錄音,不用合成語音";
+        voiceRow.appendChild(vi);
+        voiceRow.appendChild(btn("vtest", "▶ 試聽"));
+        voiceRow.appendChild(btn("vrec", "🎙 重錄"));
+        voiceRow.appendChild(btn("vdel", "✕"));
+      } else {
+        voiceRow.appendChild(btn("vrec", "🎙 錄這句", "用麥克風錄自己的聲音取代合成語音"));
+        const vHint = document.createElement("span");
+        vHint.className = "scene-kind";
+        vHint.textContent = "沒錄音就用合成語音";
+        voiceRow.appendChild(vHint);
+      }
+      adv.appendChild(voiceRow);
+
       body.appendChild(head);
       body.appendChild(ta);
       body.appendChild(adv);
@@ -551,6 +711,7 @@
       li.appendChild(body);
       sceneListEl.appendChild(li);
     });
+    scheduleProjectSave(); // 任何結構變動後自動存檔
   }
 
   let pendingImgSceneId = null;
@@ -593,6 +754,19 @@
     }
     if (act === "sfxdel") {
       scenes[idx].sfx = null;
+      renderScenes();
+      return;
+    }
+    if (act === "vrec") {
+      toggleMicRecording(scenes[idx], b);
+      return;
+    }
+    if (act === "vtest") {
+      playVoicePreview(scenes[idx]);
+      return;
+    }
+    if (act === "vdel") {
+      scenes[idx].voice = null;
       renderScenes();
       return;
     }
@@ -643,13 +817,77 @@
     if (!file || !scene) return;
     showError("step2-error", "");
     try {
-      scene.sfx = { name: file.name, buffer: await decodeAudioFile(file, SFX_MAX_BYTES, "音效"), volume: 0.6 };
+      scene.sfx = { name: file.name, buffer: await decodeAudioFile(file, SFX_MAX_BYTES, "音效"), volume: 0.6, blob: file };
       scene.advOpen = true;
       renderScenes();
     } catch (e) {
       showError("step2-error", `音效讀取失敗:${e.message || "不明錯誤"}`);
     }
   });
+
+  // ===== 麥克風錄旁白 =====
+  let micRec = null;      // 進行中的錄音 { sceneId, recorder, stream }
+  let voicePreview = null;
+
+  async function toggleMicRecording(scene, btnEl) {
+    if (micRec) { // 正在錄音:按一下=停止(不論按到哪個場景的按鈕)
+      micRec.recorder.stop();
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert("這個瀏覽器不支援麥克風錄音,請改用桌面版 Chrome。");
+      return;
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      alert("無法使用麥克風:請在網址列旁允許麥克風權限後再試一次。");
+      return;
+    }
+    let recorder;
+    try {
+      recorder = new MediaRecorder(stream);
+    } catch (e) {
+      stream.getTracks().forEach((t) => t.stop());
+      alert("這個瀏覽器無法錄音,請改用桌面版 Chrome。");
+      return;
+    }
+    const chunks = [];
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      micRec = null;
+      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      try {
+        if (!blob.size) throw new Error("沒有錄到聲音");
+        const buffer = await getAudioCtx().decodeAudioData(await blob.arrayBuffer());
+        if (buffer.duration < 0.3) throw new Error("錄音太短(不到 0.3 秒)");
+        scene.voice = { blob, buffer, duration: buffer.duration };
+      } catch (e) {
+        alert(`錄音失敗:${(e && e.message) || "不明錯誤"},請再試一次。`);
+      }
+      renderScenes();
+    };
+    micRec = { sceneId: scene.id, recorder, stream };
+    recorder.start();
+    btnEl.textContent = "⏹ 停止錄音";
+    btnEl.classList.add("rec-live");
+  }
+
+  function playVoicePreview(scene) {
+    const ctxA = getAudioCtx();
+    if (voicePreview) {
+      try { voicePreview.stop(); } catch (e) { /* 已停 */ }
+      voicePreview = null;
+    }
+    if (!scene.voice || !scene.voice.buffer) return;
+    const src = ctxA.createBufferSource();
+    src.buffer = scene.voice.buffer;
+    src.connect(ctxA.destination);
+    src.start();
+    voicePreview = src;
+  }
 
   // 音效試聽(共用 AudioContext,再按一次會蓋掉前一次)
   function playSfxPreview(scene) {
@@ -700,7 +938,7 @@
         h = c.height;
       }
       mediaUid += 1;
-      const item = { id: mediaUid, kind: "image", image: source, thumb: null, crop: defaultCrop(w, h) };
+      const item = { id: mediaUid, kind: "image", image: source, thumb: null, crop: defaultCrop(w, h), blob: file };
       makeThumb(item);
       return item;
     } finally {
@@ -735,7 +973,7 @@
       const s = Math.max(t.width / vw, t.height / vh);
       tc.drawImage(el, (t.width - vw * s) / 2, (t.height - vh * s) / 2, vw * s, vh * s);
       mediaUid += 1;
-      return { id: mediaUid, kind: "video", videoEl: el, videoUrl: url, thumb: t.toDataURL("image/jpeg", 0.75) };
+      return { id: mediaUid, kind: "video", videoEl: el, videoUrl: url, thumb: t.toDataURL("image/jpeg", 0.75), blob: file };
     } catch (e) {
       URL.revokeObjectURL(url);
       throw e;
@@ -1169,8 +1407,10 @@
     try {
       bgm.buffer = await decodeAudioFile(file, BGM_MAX_BYTES, "背景音樂");
       bgm.name = file.name;
+      bgm.blob = file;
       $("bgm-name").textContent = file.name;
       $("bgm-remove").hidden = false;
+      scheduleProjectSave();
     } catch (e) {
       showError("bgm-error", `背景音樂讀取失敗:${e.message || "不明錯誤"}`);
     }
@@ -1178,17 +1418,21 @@
   $("bgm-remove").addEventListener("click", () => {
     bgm.buffer = null;
     bgm.name = "";
+    bgm.blob = null;
     $("bgm-name").textContent = "未設定";
     $("bgm-remove").hidden = true;
+    scheduleProjectSave();
   });
   $("bgm-volume").addEventListener("input", () => {
     bgm.volume = Number($("bgm-volume").value) / 100;
     $("bgm-volume-val").textContent = `${$("bgm-volume").value}%`;
+    scheduleProjectSave();
   });
 
   // ===== 混音引擎(音效 + BGM;預覽出喇叭、錄製進 MediaStreamAudioDestinationNode)=====
   function setupAudio(dest) {
-    const hasLayers = bgm.buffer || scenes.some((s) => s.sfx && s.sfx.buffer);
+    const hasLayers = bgm.buffer ||
+      scenes.some((s) => (s.sfx && s.sfx.buffer) || (s.voice && s.voice.buffer));
     if (!hasLayers) return null;
     const ctxA = getAudioCtx();
     const out = ctxA.createGain();
@@ -1241,6 +1485,22 @@
       try { a.bgm.src.stop(); } catch (e) { /* 已停 */ }
     }
     try { a.out.disconnect(); } catch (e) { /* 已斷線 */ }
+  }
+
+  // 錄好的旁白經混音圖播放(預覽出喇叭、錄製進錄音軌)
+  function playVoiceTrack(a, voice) {
+    return new Promise((resolve) => {
+      if (!a) { resolve(); return; }
+      const src = a.ctx.createBufferSource();
+      src.buffer = voice.buffer;
+      src.connect(a.out);
+      src.onended = () => {
+        if (play) play.voiceSrc = null;
+        resolve();
+      };
+      if (play) play.voiceSrc = src;
+      src.start();
+    });
   }
 
   // 正常結束:BGM 淡出 1 秒再收
@@ -1476,6 +1736,9 @@
     if (!play) return;
     play.running = false;
     if (ttsOk()) speechSynthesis.cancel(); // 讓進行中的 utterance 立刻 onend/onerror
+    if (play.voiceSrc) {
+      try { play.voiceSrc.stop(); } catch (e) { /* 已停 */ } // onended 會 resolve
+    }
   }
 
   async function abortableSleep(ms) {
@@ -1492,14 +1755,20 @@
       if (!play || !play.running) break;
       const scene = list[i];
       const char = charById(scene.charId); // 每句用指定角色的語音/語速/音調
+      const voice = (scene.voice && scene.voice.buffer) ? scene.voice : null;
       play.scene = scene;
       play.sceneStart = performance.now();
-      play.estDur = estimateDur(scene.text || "  ", char ? char.rate : 1);
+      // 有錄音時用實際長度,分鏡切換與運鏡進度都更準
+      play.estDur = voice ? voice.duration : estimateDur(scene.text || "  ", char ? char.rate : 1);
       onSceneStart(i, list.length);
       const text = scene.text.trim();
       const start = (performance.now() - play.t0) / 1000;
       const sfxSrc = startSfx(play.audio, scene); // 場景開始播音效
-      if (text && !play.silent && ttsOk() && char) {
+      if (voice) {
+        duckBgm(play.audio, true);
+        await playVoiceTrack(play.audio, voice); // 錄音優先於合成語音
+        duckBgm(play.audio, false);
+      } else if (text && !play.silent && ttsOk() && char) {
         duckBgm(play.audio, true); // 有語音時 BGM 自動閃避
         await speakText(text, char);
         duckBgm(play.audio, false);
@@ -1617,27 +1886,36 @@
       return;
     }
 
-    const genBtn = $("generate-btn");
-    genBtn.disabled = true;
-    setStatus("等待你選擇要分享的畫面…(請選「Chrome 分頁」並勾選「同時分享分頁音訊」)");
+    // 只有「還有句子要用合成語音」時才需要分享分頁音訊;
+    // 全部句子都錄好旁白的話,直接用錄音混音,免分享
+    const needsTts = list.some((s) => s.text.trim() && !(s.voice && s.voice.buffer));
     let audio;
-    try {
-      audio = await acquireTabAudio();
-    } finally {
-      genBtn.disabled = false;
+    if (needsTts) {
+      const genBtn = $("generate-btn");
+      genBtn.disabled = true;
+      setStatus("等待你選擇要分享的畫面…(請選「Chrome 分頁」並勾選「同時分享分頁音訊」)");
+      try {
+        audio = await acquireTabAudio();
+      } finally {
+        genBtn.disabled = false;
+      }
+      if (!audio) { // 使用者中止
+        setStatus("已中止,可再按一次「生成影片」重試。");
+        return;
+      }
+      setStatus("");
+    } else {
+      audio = { audioTrack: null, displayStream: null, silent: true }; // silent 只代表不用 TTS
     }
-    if (!audio) { // 使用者中止
-      setStatus("已中止,可再按一次「生成影片」重試。");
-      return;
-    }
-    setStatus("");
     const { audioTrack, displayStream, silent } = audio;
 
     const canvasStream = stage.captureStream(30);
     const tracks = [...canvasStream.getVideoTracks()];
     // 有音效/BGM 時:分頁音訊(TTS)與 WebAudio 三層混進同一條音軌
     // (MediaRecorder 只錄第一條音軌,不能直接放兩條)
-    const useMix = !!(bgm.buffer || scenes.some((s) => s.sfx && s.sfx.buffer));
+    const useMix = !!(bgm.buffer ||
+      scenes.some((s) => (s.sfx && s.sfx.buffer)) ||
+      list.some((s) => s.voice && s.voice.buffer));
     let recDest = null;
     if (useMix) {
       const ctxA = getAudioCtx();
@@ -1709,8 +1987,11 @@
       return;
     }
     setStatus("");
-    showResult(new Blob(chunks, { type: rec.mimeType || "video/webm" }), timings, silent);
+    // 全部用錄音時不算無聲版本(影片有旁白)
+    showResult(new Blob(chunks, { type: rec.mimeType || "video/webm" }), timings, silent && needsTts);
   });
+
+  let lastResult = null; // { blob, timings } 供 MP4 轉檔與發佈準備包交接使用
 
   function showResult(blob, timings, silent) {
     lastUrls.forEach((u) => URL.revokeObjectURL(u));
@@ -1719,6 +2000,10 @@
       showError("gen-error", "錄製結果是空的,請重試一次(錄製期間請保持分頁在最前面)。");
       return;
     }
+    lastResult = { blob, timings };
+    $("download-mp4").hidden = true; // 新結果要重新轉檔
+    $("mp4-btn").disabled = false;
+    showError("mp4-error", "");
     const videoUrl = URL.createObjectURL(blob);
     lastUrls.push(videoUrl);
     $("result-video").src = videoUrl;
@@ -1741,6 +2026,102 @@
     area.hidden = false;
     area.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
+
+  // ===== MP4 轉檔(ffmpeg.wasm)=====
+  let ffmpeg = null; // 實例可重複使用;失敗 terminate 後設 null 重新載入
+
+  $("mp4-btn").addEventListener("click", async () => {
+    if (!lastResult) return;
+    if (!window.FFmpegLoader) {
+      showError("mp4-error", "轉換引擎載入失敗,請重新整理頁面再試。");
+      return;
+    }
+    const btn = $("mp4-btn");
+    btn.disabled = true;
+    showError("mp4-error", "");
+    $("mp4-progress").hidden = false;
+    const setP = (r, t) => {
+      $("mp4-progress-bar").style.width = `${Math.round(clamp(r, 0, 1) * 100)}%`;
+      if (t) $("mp4-progress-text").textContent = t;
+    };
+    // 用字幕最後一句的結束時間估總長,換算轉檔進度
+    const t = lastResult.timings;
+    const totalDur = t.length ? t[t.length - 1].end + 1.5 : 0;
+    try {
+      if (!ffmpeg || !ffmpeg.loaded) {
+        ffmpeg = await window.FFmpegLoader.createLoadedFFmpeg((msg) => setP(0, msg));
+      }
+      const ff = ffmpeg;
+      setP(0.02, "正在讀取影片…");
+      await ff.writeFile("in.webm", new Uint8Array(await lastResult.blob.arrayBuffer()));
+      const onProgress = ({ time }) => {
+        const ratio = totalDur ? Math.min(1, time / 1e6 / totalDur) : 0;
+        setP(0.05 + ratio * 0.9, `轉換中… ${Math.round(ratio * 100)}%(單執行緒轉檔較慢,請耐心等候)`);
+      };
+      ff.on("progress", onProgress);
+      try {
+        const ret = await ff.exec([
+          "-i", "in.webm",
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+          "-c:a", "aac", "-b:a", "128k",
+          "-movflags", "+faststart",
+          "out.mp4",
+        ]);
+        if (ret !== 0) throw new Error("ffmpeg 轉換失敗(exit code " + ret + ")");
+      } finally {
+        ff.off("progress", onProgress);
+      }
+      setP(0.97, "正在產生 MP4…");
+      const data = await ff.readFile("out.mp4");
+      await ff.deleteFile("in.webm").catch(() => {});
+      await ff.deleteFile("out.mp4").catch(() => {});
+      const mp4Blob = new Blob([data.buffer], { type: "video/mp4" });
+      const url = URL.createObjectURL(mp4Blob);
+      lastUrls.push(url);
+      const a = $("download-mp4");
+      a.href = url;
+      a.textContent = `⬇ 下載 MP4(${fmtSize(mp4Blob.size)})`;
+      a.hidden = false;
+      $("mp4-progress").hidden = true;
+    } catch (err) {
+      $("mp4-progress").hidden = true;
+      showError("mp4-error",
+        "轉換失敗:" + ((err && err.message) || err) +
+        "\n可能是網路連不上 CDN 或記憶體不足;WebM 檔仍可直接下載使用。");
+      try { ffmpeg && ffmpeg.terminate(); } catch (e) { /* 已失效 */ }
+      ffmpeg = null;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // ===== 帶到發佈準備包(IndexedDB 交接,與合併/字幕工具同一機制)=====
+  $("publish-btn").addEventListener("click", async () => {
+    if (!lastResult) return;
+    try {
+      const db = await new Promise((resolve, reject) => {
+        const req = indexedDB.open("video-tools", 1);
+        req.onupgradeneeded = () => req.result.createObjectStore("handoff");
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("handoff", "readwrite");
+        tx.objectStore("handoff").put({
+          blob: lastResult.blob,
+          name: "script-video.webm",
+          segs: lastResult.timings,
+          offset: 0,
+          savedAt: Date.now(),
+        }, "publish");
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      location.href = "publish.html?from=tool";
+    } catch (e) {
+      showError("mp4-error", `交接失敗:${(e && e.message) || e},請改用下載檔案的方式。`);
+    }
+  });
 
   // ===== 事件與初始化 =====
   document.querySelectorAll(".wizard-step").forEach((btn) => {
@@ -1777,4 +2158,24 @@
     renderCharacters();
   }
   drawIdle();
+
+  // 專案還原:找到上次自動存檔就詢問是否繼續編輯
+  (async () => {
+    try {
+      const proj = await loadProjectRecord();
+      if (!proj || !Array.isArray(proj.scenes) || !proj.scenes.length) return;
+      const when = proj.savedAt ? new Date(proj.savedAt).toLocaleString("zh-TW") : "";
+      if (!confirm(`找到上次自動儲存的專案(${proj.scenes.length} 個場景${when ? ",存於 " + when : ""})。\n\n按「確定」還原繼續編輯,按「取消」丟棄並重新開始。`)) {
+        await deleteProjectRecord();
+        return;
+      }
+      await restoreProject(proj);
+      renderCharacters();
+      renderScenes();
+      const resultEl = $("split-result");
+      resultEl.textContent = `✅ 已還原上次的專案(${scenes.length} 個場景)`;
+      resultEl.hidden = false;
+      gotoStep(2);
+    } catch (e) { /* 還原失敗就維持全新開始 */ }
+  })();
 })();

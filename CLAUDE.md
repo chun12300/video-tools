@@ -146,7 +146,19 @@
 - 預覽與錄製共用同一個播放引擎(rAF 繪製 + 100ms interval 備援,
   分頁被遮住時 rAF 會停);錄製期間必須保持分頁在前景。
 - 文案與設定(語音/語速/字幕樣式)存 localStorage(`script-video-draft-v1`);
-  場景與圖片不持久化。
+  **整包專案另外自動存進 IndexedDB**(獨立資料庫 `script-video-project`,
+  **不能動共用的 `video-tools` 資料庫版本**,升級會弄壞其他工具的交接):
+  場景素材/音效/BGM/錄音都保留原始 blob(`item.blob`),還原時重新解碼;
+  1.5s debounce,開頁時發現存檔會詢問還原。
+- **麥克風錄旁白**:`scene.voice{blob,buffer,duration}`,getUserMedia+MediaRecorder
+  錄完 decodeAudioData;播放時錄音優先於 TTS、經混音圖(`playVoiceTrack`),
+  estDur 用實際長度(分鏡/運鏡更準);全部句子都有錄音時生成免分享分頁
+  (`needsTts`),silent-note 只在真的缺 TTS 時顯示。
+- **成品出口**:「轉成 MP4」用 ffmpeg.wasm(libx264 veryfast CRF23 + AAC,
+  進度用字幕最後一句結束時間估總長);「帶到發佈準備包」走 `video-tools/handoff`
+  IndexedDB(key `publish`,`{blob,name,segs,offset}`,segs 直接用 timings)。
+  MediaRecorder 的 WebM duration=Infinity,publish.js 用 `ensureFiniteDuration`
+  (seek 到 1e9 逼出實際長度)處理封面截圖與進度。
 
 ### 發佈準備包(publish.js)的設計
 
