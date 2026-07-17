@@ -1104,6 +1104,86 @@ legend {
   flex-wrap: wrap;
 }
 
+/* ---- 場景素材與運鏡(摺疊) ---- */
+.scene-adv {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 10px;
+}
+
+.scene-adv summary {
+  cursor: pointer;
+  padding: 8px 2px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.scene-adv summary:hover { color: var(--text); }
+
+.scene-adv[open] summary { border-bottom: 1px solid var(--border); }
+
+.scene-adv .list-hint { margin: 6px 0; font-size: 0.8rem; }
+
+.scene-adv .field-row { margin: 8px 0 12px; }
+
+.scene-adv .field-row select {
+  flex: 1;
+  min-width: 160px;
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 0.88rem;
+}
+
+.media-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 0 2px;
+}
+
+.media-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+
+.media-thumb {
+  width: 60px;
+  height: 106px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  display: block;
+}
+
+.media-thumb:hover { border-color: var(--accent); }
+
+.media-ctrl {
+  display: flex;
+  gap: 2px;
+}
+
+.media-ctrl .btn {
+  padding: 2px 6px;
+  font-size: 0.72rem;
+}
+
+.media-ctrl .btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.media-add { align-self: center; }
+
 .scene-actions .btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;

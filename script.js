@@ -22,6 +22,14 @@
   const FONT_STACK = '"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif';
   const SUB_SIZES = { large: 76, medium: 60, small: 46 };
   const MAX_CHARS = 6;           // 語音角色上限
+  const MAX_MEDIA = 3;           // 每個場景的素材(圖片)上限
+  const MOTIONS = {              // 場景運鏡選項
+    zoom: "緩慢放大",
+    push: "快速推進",
+    pan: "左右橫移",
+    shake: "震動",
+    none: "固定",
+  };
   const TEST_SENTENCE = "你好,這是我的聲音,請問這樣可以嗎?";
   const CHAR_COLORS = ["#5b8cff", "#ff7a7a", "#5ad19a", "#ffc95c", "#c58bff", "#ff9c6e", "#4dd0e1", "#f06292"];
   // 依語音名稱推測性別(常見中文語音對照表,比對時去掉空白與符號)
@@ -219,7 +227,10 @@
     uid += 1;
     ensureNarrator();
     return {
-      id: uid, text, image: null, thumb: null, hue: (uid * 53) % 360, crop: null,
+      id: uid, text, hue: (uid * 53) % 360,
+      media: [],          // 1~3 個素材 { id, image, thumb, crop },多張時語音時間平均分配硬切
+      motion: "zoom",     // 運鏡(套用到該場景所有素材)
+      advOpen: false,     // 「素材與運鏡」摺疊狀態(重繪時保留)
       charId: charId || characters[0].id,
     };
   }
@@ -235,20 +246,20 @@
     return { x: (w - cw) / 2, y: (h - ch) / 2, w: cw, h: ch };
   }
 
-  function sceneCrop(scene) {
-    if (scene.crop) return scene.crop;
-    const { w, h } = imgSize(scene.image);
+  function itemCrop(item) {
+    if (item.crop) return item.crop;
+    const { w, h } = imgSize(item.image);
     return defaultCrop(w, h);
   }
 
-  // 依裁剪範圍重畫場景縮圖(直式 9:16)
-  function makeThumb(scene) {
-    const crop = sceneCrop(scene);
+  // 依裁剪範圍重畫素材縮圖(直式 9:16)
+  function makeThumb(item) {
+    const crop = itemCrop(item);
     const t = document.createElement("canvas");
     t.width = 72;
     t.height = 128;
-    t.getContext("2d").drawImage(scene.image, crop.x, crop.y, crop.w, crop.h, 0, 0, t.width, t.height);
-    scene.thumb = t.toDataURL("image/jpeg", 0.75);
+    t.getContext("2d").drawImage(item.image, crop.x, crop.y, crop.w, crop.h, 0, 0, t.width, t.height);
+    item.thumb = t.toDataURL("image/jpeg", 0.75);
   }
 
   function analyze() {
@@ -301,25 +312,32 @@
       li.dataset.id = scene.id;
       li.style.borderLeft = `4px solid ${char.color}`; // 角色代表色色條
 
+      // 主縮圖:第一個素材(或漸層文字卡),點擊展開/收合素材設定
       const thumb = document.createElement("div");
       thumb.className = "scene-thumb";
-      if (scene.thumb) {
+      if (scene.media.length) {
         const img = document.createElement("img");
-        img.src = scene.thumb;
-        img.alt = "場景圖片縮圖(點擊可裁剪)";
+        img.src = scene.media[0].thumb;
+        img.alt = "場景素材縮圖";
         thumb.appendChild(img);
-        const badge = document.createElement("span");
-        badge.className = "thumb-crop-badge";
-        badge.textContent = "✂️";
-        thumb.appendChild(badge);
+        if (scene.media.length > 1) {
+          const badge = document.createElement("span");
+          badge.className = "thumb-crop-badge";
+          badge.textContent = `×${scene.media.length}`;
+          thumb.appendChild(badge);
+        }
         thumb.classList.add("has-img");
-        thumb.title = "點擊裁剪圖片";
-        thumb.addEventListener("click", () => openCropModal(scene));
       } else {
         thumb.textContent = "文字卡";
         thumb.style.background =
           `linear-gradient(160deg, hsl(${scene.hue},55%,32%), hsl(${scene.hue + 40},65%,14%))`;
       }
+      thumb.title = "點擊展開素材與運鏡設定";
+      thumb.style.cursor = "pointer";
+      thumb.addEventListener("click", () => {
+        scene.advOpen = !scene.advOpen;
+        renderScenes();
+      });
 
       const body = document.createElement("div");
       body.className = "scene-body";
@@ -327,7 +345,7 @@
       const head = document.createElement("div");
       head.className = "scene-head";
       head.innerHTML = `<span class="item-index">${i + 1}</span>` +
-        `<span class="scene-kind">${scene.image ? "🖼 圖片背景" : "🎨 漸層文字卡"}</span>`;
+        `<span class="scene-kind">${scene.media.length ? `🖼 圖片×${scene.media.length}` : "🎨 漸層文字卡"}</span>`;
 
       // 這句由哪個角色唸
       const charSel = document.createElement("select");
@@ -371,14 +389,84 @@
       };
       actions.appendChild(btn("up", "↑", "上移", i === 0));
       actions.appendChild(btn("down", "↓", "下移", i === scenes.length - 1));
-      actions.appendChild(btn("img", scene.image ? "🖼 換圖片" : "🖼 上傳圖片"));
-      if (scene.image) actions.appendChild(btn("crop", "✂️ 裁剪", "框選要出現在影片裡的範圍"));
-      if (scene.image) actions.appendChild(btn("rmimg", "移除圖片"));
       actions.appendChild(btn("merge", "⤵ 併入下一句", "把下一個場景的文字併進這個場景", i === scenes.length - 1));
       actions.appendChild(btn("del", "✕ 刪除"));
 
+      // 素材與運鏡(摺疊收納,保持列表清爽)
+      const adv = document.createElement("details");
+      adv.className = "scene-adv";
+      adv.open = !!scene.advOpen;
+      adv.addEventListener("toggle", () => { scene.advOpen = adv.open; });
+      const sum = document.createElement("summary");
+      sum.textContent = `🎬 素材與運鏡(${scene.media.length ? `圖片×${scene.media.length}` : "文字卡"}・${MOTIONS[scene.motion] || MOTIONS.zoom})`;
+      adv.appendChild(sum);
+
+      const mediaRow = document.createElement("div");
+      mediaRow.className = "media-row";
+      scene.media.forEach((item, mi) => {
+        const cell = document.createElement("div");
+        cell.className = "media-cell";
+        const mimg = document.createElement("img");
+        mimg.className = "media-thumb";
+        mimg.src = item.thumb;
+        mimg.alt = `素材 ${mi + 1}(點擊裁剪)`;
+        mimg.title = "點擊裁剪這張圖";
+        mimg.addEventListener("click", () => openCropModal(item));
+        const ctrl = document.createElement("div");
+        ctrl.className = "media-ctrl";
+        const mbtn = (mact, label, title, disabled) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "btn btn-small";
+          b.dataset.mact = mact;
+          b.dataset.mid = item.id;
+          b.textContent = label;
+          b.title = title;
+          b.disabled = !!disabled;
+          return b;
+        };
+        ctrl.appendChild(mbtn("mleft", "◀", "往前移", mi === 0));
+        ctrl.appendChild(mbtn("mright", "▶", "往後移", mi === scene.media.length - 1));
+        ctrl.appendChild(mbtn("mdel", "✕", "刪除這張圖"));
+        cell.appendChild(mimg);
+        cell.appendChild(ctrl);
+        mediaRow.appendChild(cell);
+      });
+      if (scene.media.length < MAX_MEDIA) {
+        const addBtn = btn("addimg", "＋ 加圖片", `一個場景最多 ${MAX_MEDIA} 張圖`);
+        addBtn.classList.add("media-add");
+        mediaRow.appendChild(addBtn);
+      }
+      adv.appendChild(mediaRow);
+      const advHint = document.createElement("p");
+      advHint.className = "list-hint";
+      advHint.textContent = "多張圖時,該句語音時間平均分給每張、依序硬切(分鏡感);點縮圖可個別裁剪。";
+      adv.appendChild(advHint);
+
+      const motionRow = document.createElement("div");
+      motionRow.className = "field-row";
+      const mLabel = document.createElement("label");
+      mLabel.textContent = "運鏡";
+      const mSel = document.createElement("select");
+      mSel.className = "scene-motion";
+      Object.entries(MOTIONS).forEach(([val, name]) => {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = val === "zoom" ? `${name}(預設)` : name;
+        mSel.appendChild(opt);
+      });
+      mSel.value = MOTIONS[scene.motion] ? scene.motion : "zoom";
+      mSel.addEventListener("change", () => {
+        scene.motion = mSel.value;
+        sum.textContent = `🎬 素材與運鏡(${scene.media.length ? `圖片×${scene.media.length}` : "文字卡"}・${MOTIONS[scene.motion]})`;
+      });
+      motionRow.appendChild(mLabel);
+      motionRow.appendChild(mSel);
+      adv.appendChild(motionRow);
+
       body.appendChild(head);
       body.appendChild(ta);
+      body.appendChild(adv);
       body.appendChild(actions);
       li.appendChild(thumb);
       li.appendChild(body);
@@ -389,9 +477,28 @@
   let pendingImgSceneId = null;
 
   sceneListEl.addEventListener("click", (ev) => {
+    const li = ev.target.closest("li[data-id]");
+    if (!li) return;
+    // 素材(多圖)操作
+    const mb = ev.target.closest("button[data-mact]");
+    if (mb) {
+      const scene = scenes.find((s) => s.id === Number(li.dataset.id));
+      if (!scene) return;
+      const mi = scene.media.findIndex((m) => m.id === Number(mb.dataset.mid));
+      if (mi < 0) return;
+      const mact = mb.dataset.mact;
+      if (mact === "mleft" && mi > 0) {
+        [scene.media[mi - 1], scene.media[mi]] = [scene.media[mi], scene.media[mi - 1]];
+      } else if (mact === "mright" && mi < scene.media.length - 1) {
+        [scene.media[mi + 1], scene.media[mi]] = [scene.media[mi], scene.media[mi + 1]];
+      } else if (mact === "mdel") {
+        scene.media.splice(mi, 1);
+      }
+      renderScenes();
+      return;
+    }
     const b = ev.target.closest("button[data-act]");
     if (!b) return;
-    const li = ev.target.closest("li[data-id]");
     const idx = scenes.findIndex((s) => s.id === Number(li.dataset.id));
     if (idx < 0) return;
     const act = b.dataset.act;
@@ -404,17 +511,10 @@
     } else if (act === "merge" && idx < scenes.length - 1) {
       scenes[idx].text = `${scenes[idx].text}${scenes[idx + 1].text}`;
       scenes.splice(idx + 1, 1);
-    } else if (act === "img") {
+    } else if (act === "addimg") {
       pendingImgSceneId = scenes[idx].id;
       $("scene-img-input").click();
       return; // 選完檔案才重繪
-    } else if (act === "rmimg") {
-      scenes[idx].image = null;
-      scenes[idx].thumb = null;
-      scenes[idx].crop = null;
-    } else if (act === "crop") {
-      openCropModal(scenes[idx]);
-      return; // 彈窗關閉時才重繪
     }
     renderScenes();
   });
@@ -427,7 +527,9 @@
     if (!file || !scene) return;
     showError("step2-error", "");
     try {
-      await loadSceneImage(file, scene);
+      if (scene.media.length >= MAX_MEDIA) throw new Error(`一個場景最多 ${MAX_MEDIA} 張圖`);
+      scene.media.push(await loadMediaItem(file));
+      scene.advOpen = true; // 加完圖保持展開,方便繼續調整
       renderScenes();
     } catch (e) {
       showError("step2-error", `圖片讀取失敗:${e.message || "不明錯誤"},請換一張圖片試試。`);
@@ -443,7 +545,8 @@
     });
   }
 
-  async function loadSceneImage(file, scene) {
+  let mediaUid = 0;
+  async function loadMediaItem(file) {
     if (!file.type.startsWith("image/")) throw new Error("這不是圖片檔");
     const url = URL.createObjectURL(file);
     try {
@@ -463,9 +566,10 @@
         w = c.width;
         h = c.height;
       }
-      scene.image = source;
-      scene.crop = defaultCrop(w, h); // 預設:置中的最大 9:16 範圍
-      makeThumb(scene);
+      mediaUid += 1;
+      const item = { id: mediaUid, image: source, thumb: null, crop: defaultCrop(w, h) };
+      makeThumb(item);
+      return item;
     } finally {
       URL.revokeObjectURL(url);
     }
@@ -487,9 +591,9 @@
   let cropState = null;  // { scene, scale, dispW, dispH, box:{x,y,w,h}(顯示座標) }
   let cropDrag = null;   // 進行中的拖曳 { mode:"move"|角落, startX, startY, startBox }
 
-  function openCropModal(scene) {
-    if (!scene.image) return;
-    const { w, h } = imgSize(scene.image);
+  function openCropModal(item) {
+    if (!item || !item.image) return;
+    const { w, h } = imgSize(item.image);
     cropModal.hidden = false;
     // 原圖等比縮小到適合彈窗:寬度塞進內容區、高度不超過視窗 55%
     const areaW = Math.max(cropStage.parentElement.clientWidth, 200);
@@ -499,10 +603,10 @@
     const dispH = Math.max(1, Math.round(h * scale));
     cropCanvas.width = dispW;
     cropCanvas.height = dispH;
-    cropCanvas.getContext("2d").drawImage(scene.image, 0, 0, dispW, dispH);
-    const crop = sceneCrop(scene); // 從上次的範圍繼續調
+    cropCanvas.getContext("2d").drawImage(item.image, 0, 0, dispW, dispH);
+    const crop = itemCrop(item); // 從上次的範圍繼續調
     cropState = {
-      scene, scale, dispW, dispH,
+      item, scale, dispW, dispH,
       box: { x: crop.x * scale, y: crop.y * scale, w: crop.w * scale, h: crop.h * scale },
     };
     clampCropBox();
@@ -586,8 +690,8 @@
 
   $("crop-ok").addEventListener("click", () => {
     if (!cropState) return;
-    const { scene, scale, box } = cropState;
-    const { w, h } = imgSize(scene.image);
+    const { item, scale, box } = cropState;
+    const { w, h } = imgSize(item.image);
     const crop = { x: box.x / scale, y: box.y / scale, w: box.w / scale, h: box.h / scale };
     // 換算回原圖座標後再收斂一次,避免縮放誤差超出圖片
     crop.w = Math.min(crop.w, w);
@@ -598,15 +702,15 @@
     }
     crop.x = clamp(crop.x, 0, w - crop.w);
     crop.y = clamp(crop.y, 0, h - crop.h);
-    scene.crop = crop;
-    makeThumb(scene);
+    item.crop = crop;
+    makeThumb(item);
     closeCropModal();
     renderScenes();
   });
 
   $("crop-reset").addEventListener("click", () => {
     if (!cropState) return;
-    const { w, h } = imgSize(cropState.scene.image);
+    const { w, h } = imgSize(cropState.item.image);
     const d = defaultCrop(w, h);
     const k = cropState.scale;
     cropState.box = { x: d.x * k, y: d.y * k, w: d.w * k, h: d.h * k };
@@ -966,22 +1070,43 @@
     paintLines(lines, H * 0.45, px, false);
   }
 
-  // 把裁剪範圍畫滿整個畫面(9:16 對 9:16,不變形);
-  // Ken Burns 放大 = 以裁剪範圍中心往內縮小取樣區(drawImage 九參數版)
-  function drawSceneImage(scene, kbScale) {
-    const crop = sceneCrop(scene);
-    const sw = crop.w / kbScale;
-    const sh = crop.h / kbScale;
-    const sx = crop.x + (crop.w - sw) / 2;
-    const sy = crop.y + (crop.h - sh) / 2;
-    ctx.drawImage(scene.image, sx, sy, sw, sh, 0, 0, W, H);
+  // 依運鏡計算取樣範圍(drawImage 九參數版的 sx,sy,sw,sh):
+  // 一律以裁剪範圍為邊界計算,任何運鏡都不會露出圖片外的黑邊
+  function motionSourceRect(item, motion, p) {
+    const crop = itemCrop(item);
+    let s;
+    switch (motion) {
+      case "push": s = 1 + 0.25 * p; break; // 快速推進 1.0 → 1.25
+      case "pan": s = 1.12; break;          // 橫移:固定放大以預留左右平移空間
+      case "shake": s = 1.05; break;        // 震動:固定放大以預留抖動安全邊距
+      case "none": s = 1; break;            // 固定
+      default: s = 1 + KEN_BURNS * p;       // 緩慢放大 1.0 → 1.08(預設)
+    }
+    const sw = crop.w / s;
+    const sh = crop.h / s;
+    let sx = crop.x + (crop.w - sw) / 2;
+    let sy = crop.y + (crop.h - sh) / 2;
+    if (motion === "pan") sx = crop.x + (crop.w - sw) * p; // 由左緩慢移到右
+    if (motion === "shake") {
+      const amp = 6 * (sw / W); // 畫面 ±6px 換算回原圖座標,每一格隨機位移
+      sx = clamp(sx + (Math.random() * 2 - 1) * amp, crop.x, crop.x + crop.w - sw);
+      sy = clamp(sy + (Math.random() * 2 - 1) * amp, crop.y, crop.y + crop.h - sh);
+    }
+    return { sx, sy, sw, sh };
   }
 
   function drawScene(scene, progress) {
+    const p = clamp(progress, 0, 1);
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, W, H);
-    if (scene.image) {
-      drawSceneImage(scene, 1 + KEN_BURNS * Math.min(Math.max(progress, 0), 1));
+    if (scene.media.length) {
+      // 一句多圖:語音時間平均分給每張、依序硬切,每張各自跑運鏡
+      const n = scene.media.length;
+      const idx = Math.min(Math.floor(p * n), n - 1);
+      const segP = clamp(p * n - idx, 0, 1);
+      const item = scene.media[idx];
+      const r = motionSourceRect(item, scene.motion, segP);
+      ctx.drawImage(item.image, r.sx, r.sy, r.sw, r.sh, 0, 0, W, H);
       drawSubtitle(scene.text);
     } else {
       drawTextCard(scene);
@@ -989,7 +1114,7 @@
   }
 
   function usableScenes() {
-    return scenes.filter((s) => s.text.trim() || s.image);
+    return scenes.filter((s) => s.text.trim() || s.media.length);
   }
 
   function drawIdle() {
