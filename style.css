@@ -1238,6 +1238,16 @@ legend {
   max-width: 55%;
 }
 
+.rec-live {
+  border-color: var(--error) !important;
+  color: var(--error) !important;
+  animation: rec-pulse 1s infinite;
+}
+
+@keyframes rec-pulse {
+  50% { opacity: 0.55; }
+}
+
 .scene-actions .btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;

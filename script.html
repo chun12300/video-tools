@@ -142,6 +142,8 @@
         <p>錄製期間請<strong>保持此分頁在最前面</strong>,不要切換視窗或最小化,直到生成完成。
           若輸出的影片沒有聲音,可以改選「整個畫面」並勾選「分享系統音訊」再試一次。
           若拒絕分享,仍可輸出<strong>無聲版本</strong>(有畫面和字幕)。</p>
+        <p>💡 小訣竅:如果每一句都用場景卡片裡的「🎙 錄這句」錄好自己的聲音,
+          生成時就<strong>不需要分享分頁</strong>,會直接使用你的錄音(音質也更自然)。</p>
       </div>
 
       <button type="button" id="generate-btn" class="btn btn-primary">🎬 生成影片</button>
@@ -161,7 +163,17 @@
         <div class="result-actions">
           <a id="download-video" class="btn btn-primary" download="script-video.webm">⬇ 下載影片 (WebM)</a>
           <a id="download-srt" class="btn" download="subtitle.srt">⬇ 下載字幕 (SRT)</a>
+          <button type="button" id="mp4-btn" class="btn">🎬 轉成 MP4</button>
+          <a id="download-mp4" class="btn btn-primary" download="script-video.mp4" hidden>⬇ 下載 MP4</a>
+          <button type="button" id="publish-btn" class="btn">📦 帶到發佈準備包</button>
         </div>
+        <p class="list-hint">WebM 可直接上傳 YouTube;要傳 IG / LINE 或給剪輯軟體用,建議轉成 MP4。
+          「發佈準備包」可一鍵產出直式版本、封面截圖與文案提示詞(字幕會一併帶過去)。</p>
+        <div id="mp4-progress" class="progress-area" hidden>
+          <p id="mp4-progress-text">準備中…</p>
+          <div class="progress-track"><div id="mp4-progress-bar" class="progress-bar"></div></div>
+        </div>
+        <p id="mp4-error" class="error-msg" hidden></p>
       </div>
     </section>
   </main>
@@ -197,6 +209,7 @@
     <p>🔒 隱私優先:分句、語音合成與影片錄製都在你的瀏覽器裡完成,文字與圖片不會上傳到任何伺服器。</p>
   </footer>
 
+  <script src="ffmpeg-loader.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
