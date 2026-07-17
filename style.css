@@ -1213,9 +1213,118 @@ legend {
   background: #000;
 }
 
+.scene-thumb.has-img {
+  cursor: pointer;
+  position: relative;
+}
+
+.scene-thumb.has-img:hover { border-color: var(--accent); }
+
+.thumb-crop-badge {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: 6px;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  padding: 0 4px;
+  pointer-events: none;
+}
+
+/* ---- 裁剪彈窗 ---- */
+.modal-backdrop[hidden] { display: none; } /* display:flex 會蓋過 hidden,需明確處理 */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
+}
+
+.modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: min(640px, 100%);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 16px 18px 18px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.crop-area {
+  display: flex;
+  justify-content: center;
+  margin: 14px 0;
+}
+
+.crop-stage {
+  position: relative;
+  overflow: hidden;      /* 讓框外遮罩(box-shadow)不外溢 */
+  touch-action: none;    /* 拖曳時不觸發頁面捲動(觸控) */
+  user-select: none;
+  border-radius: 6px;
+  line-height: 0;
+}
+
+#crop-canvas { display: block; }
+
+.crop-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6); /* 框外半透明黑遮罩 */
+  cursor: move;
+}
+
+.crop-handle {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.crop-handle[data-corner="nw"] { left: -10px; top: -10px; cursor: nwse-resize; }
+.crop-handle[data-corner="ne"] { right: -10px; top: -10px; cursor: nesw-resize; }
+.crop-handle[data-corner="sw"] { left: -10px; bottom: -10px; cursor: nesw-resize; }
+.crop-handle[data-corner="se"] { right: -10px; bottom: -10px; cursor: nwse-resize; }
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.modal-actions .btn-primary {
+  width: auto;
+  margin-top: 0;
+}
+
 @media (max-width: 560px) {
   .scene-card { flex-wrap: wrap; }
   .wizard-actions { flex-direction: column; }
+  .modal { padding: 12px; }
+  .modal-actions .btn { flex: 1; }
 }
 
 /* ---- 頁尾 ---- */
