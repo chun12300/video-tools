@@ -31,8 +31,12 @@
     push: "快速推進",
     pan: "左右橫移",
     shake: "震動",
+    parallax: "3D 視差(AI)",
     none: "固定",
   };
+  // 3D 視差:瀏覽器內 AI 深度估計(transformers.js + Depth Anything V2 small)
+  const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
+  const DEPTH_MODEL = "onnx-community/depth-anything-v2-small";
   const TEST_SENTENCE = "你好,這是我的聲音,請問這樣可以嗎?";
   const CHAR_COLORS = ["#5b8cff", "#ff7a7a", "#5ad19a", "#ffc95c", "#c58bff", "#ff9c6e", "#4dd0e1", "#f06292"];
   // 依語音名稱推測性別(常見中文語音對照表,比對時去掉空白與符號)
@@ -648,13 +652,39 @@
         mSel.appendChild(opt);
       });
       mSel.value = MOTIONS[scene.motion] ? scene.motion : "zoom";
-      mSel.addEventListener("change", () => {
+      const depthStatus = document.createElement("span");
+      depthStatus.className = "depth-status";
+      const sceneDepthReady = () =>
+        scene.media.filter((m) => m.kind === "image").every((m) => m.depth);
+      if (scene.motion === "parallax" && scene.media.some((m) => m.kind === "image")) {
+        depthStatus.textContent = sceneDepthReady() ? "✅ 深度已分析" : "⏳ 播放前會先做 AI 深度分析";
+      }
+      mSel.addEventListener("change", async () => {
         scene.motion = mSel.value;
         sum.textContent = `🎬 素材與運鏡(${scene.media.length ? `圖片×${scene.media.length}` : "文字卡"}・${MOTIONS[scene.motion]})`;
         scheduleProjectSave();
+        depthStatus.textContent = "";
+        // 選 3D 視差就先把這個場景的深度算起來(首次會下載模型)
+        if (scene.motion === "parallax") {
+          const targets = scene.media.filter((m) => m.kind === "image" && !m.depth);
+          if (!targets.length) {
+            if (scene.media.some((m) => m.kind === "image")) depthStatus.textContent = "✅ 深度已分析";
+            return;
+          }
+          try {
+            for (let k = 0; k < targets.length; k++) {
+              depthStatus.textContent = `⏳ AI 深度分析中… ${k + 1}/${targets.length}`;
+              await computeItemDepth(targets[k], (msg) => { depthStatus.textContent = `⏳ ${msg}`; });
+            }
+            depthStatus.textContent = "✅ 深度已分析";
+          } catch (e) {
+            depthStatus.textContent = "⚠️ 深度分析失敗(需要網路),會改用緩慢放大";
+          }
+        }
       });
       motionRow.appendChild(mLabel);
       motionRow.appendChild(mSel);
+      motionRow.appendChild(depthStatus);
       adv.appendChild(motionRow);
 
       // 場景音效:場景開始播放、結束停止,與語音/BGM 混音
@@ -1587,6 +1617,194 @@ ${content || "(把你的主題或原始文案貼在這裡)"}`;
     stopAudioNow(a);
   }
 
+  // ===== 3D 視差運鏡(AI 深度估計 + WebGL 位移)=====
+  let depthPipe = null;      // transformers.js 的 depth-estimation pipeline
+  let depthLoading = null;   // 載入中的 promise(避免重複載入)
+  let parallaxGL;            // WebGL 繪製器;null = 不支援,undefined = 未初始化
+
+  async function getDepthPipeline(onStatus) {
+    if (depthPipe) return depthPipe;
+    if (!depthLoading) {
+      depthLoading = (async () => {
+        if (onStatus) onStatus("載入 AI 深度引擎…");
+        const mod = await import(TRANSFORMERS_CDN);
+        if (mod.env) mod.env.allowLocalModels = false;
+        const pipe = await mod.pipeline("depth-estimation", DEPTH_MODEL, {
+          progress_callback: (info) => {
+            if (info && info.status === "progress" && info.total && onStatus) {
+              onStatus(`首次使用需下載 AI 深度模型… ${Math.round((info.loaded / info.total) * 100)}%(之後由瀏覽器快取)`);
+            }
+          },
+        });
+        depthPipe = pipe;
+        return pipe;
+      })().catch((e) => {
+        depthLoading = null; // 失敗後允許重試
+        throw e;
+      });
+    }
+    return depthLoading;
+  }
+
+  // 對單一圖片素材算深度圖(整張原圖,裁剪改變也不用重算);存成灰階 canvas 當紋理
+  async function computeItemDepth(item, onStatus) {
+    if (item.kind !== "image" || item.depth) return;
+    const pipe = await getDepthPipeline(onStatus);
+    const { w, h } = imgSize(item.image);
+    const s = Math.min(1, 768 / Math.max(w, h)); // 縮小餵模型,省時省記憶體
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(w * s));
+    c.height = Math.max(1, Math.round(h * s));
+    c.getContext("2d").drawImage(item.image, 0, 0, c.width, c.height);
+    const out = await pipe(c.toDataURL("image/jpeg", 0.9));
+    const d = out && out.depth;
+    if (!d || !d.data || !d.width || !d.height) throw new Error("深度估計結果無效");
+    const dc = document.createElement("canvas");
+    dc.width = d.width;
+    dc.height = d.height;
+    const dctx = dc.getContext("2d");
+    const idata = dctx.createImageData(d.width, d.height);
+    const ch = d.channels || 1;
+    for (let i = 0; i < d.width * d.height; i++) {
+      const v = d.data[i * ch];
+      idata.data[i * 4] = v;
+      idata.data[i * 4 + 1] = v;
+      idata.data[i * 4 + 2] = v;
+      idata.data[i * 4 + 3] = 255;
+    }
+    dctx.putImageData(idata, 0, 0);
+    item.depth = dc;
+  }
+
+  // 開始播放/生成前,把用到 3D 視差的場景深度都準備好;個別失敗就跳過(播放時退回緩慢放大)
+  async function ensureParallaxReady(list, onStatus) {
+    const items = [];
+    list.forEach((s) => {
+      if (s.motion !== "parallax") return;
+      s.media.forEach((m) => {
+        if (m.kind === "image" && !m.depth) items.push(m);
+      });
+    });
+    if (!items.length) return;
+    try {
+      for (let i = 0; i < items.length; i++) {
+        if (onStatus) onStatus(`AI 深度分析中… ${i + 1} / ${items.length}`);
+        await computeItemDepth(items[i], onStatus);
+      }
+    } catch (e) {
+      if (onStatus) onStatus("AI 深度模型載入失敗(需要網路),3D 視差場景改用緩慢放大。");
+      await sleep(1200);
+    }
+  }
+
+  // WebGL 位移著色器:依深度圖讓前景多移、背景反向,產生 2.5D 立體感
+  function getParallaxGL() {
+    if (parallaxGL !== undefined) return parallaxGL;
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      const gl = canvas.getContext("webgl", { premultipliedAlpha: false, antialias: false });
+      if (!gl) throw new Error("no webgl");
+      const compile = (type, src) => {
+        const sh = gl.createShader(type);
+        gl.shaderSource(sh, src);
+        gl.compileShader(sh);
+        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+          throw new Error(gl.getShaderInfoLog(sh) || "shader error");
+        }
+        return sh;
+      };
+      const vs = compile(gl.VERTEX_SHADER,
+        "attribute vec2 aPos;varying vec2 vUv;void main(){vUv=aPos*0.5+0.5;gl_Position=vec4(aPos,0.,1.);}");
+      const fs = compile(gl.FRAGMENT_SHADER, `
+precision mediump float;
+varying vec2 vUv;
+uniform sampler2D uImg;
+uniform sampler2D uDepth;
+uniform vec4 uCrop;   // 裁剪範圍(原圖 UV:x,y,w,h)
+uniform vec2 uShift;  // 視差位移量(crop 比例)
+uniform float uZoom;  // 基礎放大(蓋住位移後的邊緣)
+void main(){
+  vec2 uv = 0.5 + (vUv - 0.5) / uZoom;
+  vec2 iuv = uCrop.xy + uv * uCrop.zw;
+  float d = texture2D(uDepth, iuv).r;
+  vec2 disp = uShift * (d - 0.5) * uCrop.zw;
+  vec2 fuv = clamp(iuv + disp, uCrop.xy, uCrop.xy + uCrop.zw);
+  gl_FragColor = vec4(texture2D(uImg, fuv).rgb, 1.0);
+}`);
+      const prog = gl.createProgram();
+      gl.attachShader(prog, vs);
+      gl.attachShader(prog, fs);
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error("link error");
+      gl.useProgram(prog);
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      const aPos = gl.getAttribLocation(prog, "aPos");
+      gl.enableVertexAttribArray(aPos);
+      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+      const makeTex = (unit) => {
+        const t = gl.createTexture();
+        gl.activeTexture(gl.TEXTURE0 + unit);
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        return t;
+      };
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); // canvas 紋理(上到下)→ GL(下到上)
+      const texImg = makeTex(0);
+      const texDepth = makeTex(1);
+      gl.uniform1i(gl.getUniformLocation(prog, "uImg"), 0);
+      gl.uniform1i(gl.getUniformLocation(prog, "uDepth"), 1);
+      parallaxGL = {
+        canvas, gl,
+        texImg, texDepth,
+        uCrop: gl.getUniformLocation(prog, "uCrop"),
+        uShift: gl.getUniformLocation(prog, "uShift"),
+        uZoom: gl.getUniformLocation(prog, "uZoom"),
+        boundId: null,
+      };
+    } catch (e) {
+      parallaxGL = null; // 不支援 WebGL,一律退回緩慢放大
+    }
+    return parallaxGL;
+  }
+
+  // 畫一格 3D 視差;失敗回傳 false 讓呼叫端退回一般運鏡
+  function drawParallaxItem(item, p) {
+    const glc = getParallaxGL();
+    if (!glc || !item.depth) return false;
+    const { gl } = glc;
+    try {
+      if (glc.boundId !== item.id) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, glc.texImg);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, item.image);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, glc.texDepth);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, item.depth);
+        glc.boundId = item.id;
+      }
+      const { w, h } = imgSize(item.image);
+      const crop = itemCrop(item);
+      // GL 紋理已上下翻轉,crop 的 y 也要換算
+      gl.uniform4f(glc.uCrop, crop.x / w, 1 - (crop.y + crop.h) / h, crop.w / w, crop.h / h);
+      const t = p * 2 - 1; // -1 → 1:鏡頭由左往右緩慢移動
+      gl.uniform2f(glc.uShift, t * 0.05, t * -0.015);
+      gl.uniform1f(glc.uZoom, 1.06 + 0.04 * p);
+      gl.viewport(0, 0, W, H);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      ctx.drawImage(glc.canvas, 0, 0, W, H);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // ===== 畫面繪製 =====
   function roundRect(c, x, y, w, h, r) {
     c.beginPath();
@@ -1717,6 +1935,7 @@ ${content || "(把你的主題或原始文案貼在這裡)"}`;
   function motionSourceRect(item, motion, p) {
     const crop = itemCrop(item);
     let s;
+    if (motion === "parallax") motion = "zoom"; // 深度沒 ready 時的退路
     switch (motion) {
       case "push": s = 1 + 0.25 * p; break; // 快速推進 1.0 → 1.25
       case "pan": s = 1.12; break;          // 橫移:固定放大以預留左右平移空間
@@ -1770,8 +1989,12 @@ ${content || "(把你的主題或原始文案貼在這裡)"}`;
           play.activeVideo.videoEl.pause();
           play.activeVideo = null;
         }
-        const r = motionSourceRect(item, scene.motion, segP);
-        ctx.drawImage(item.image, r.sx, r.sy, r.sw, r.sh, 0, 0, W, H);
+        // 3D 視差:深度圖與 WebGL 都就緒才走,否則退回一般運鏡(緩慢放大)
+        const usedParallax = scene.motion === "parallax" && drawParallaxItem(item, segP);
+        if (!usedParallax) {
+          const r = motionSourceRect(item, scene.motion, segP);
+          ctx.drawImage(item.image, r.sx, r.sy, r.sw, r.sh, 0, 0, W, H);
+        }
       }
       drawSubtitle(scene.text);
     } else {
@@ -1944,6 +2167,7 @@ ${content || "(把你的主題或原始文案貼在這裡)"}`;
       setStatus("沒有可播放的場景,請先在步驟 2 加入內容。");
       return;
     }
+    await ensureParallaxReady(list, setStatus); // 3D 視差場景先把深度備好
     if (ttsOk()) speechSynthesis.cancel();
     beginPlay("preview", !ttsOk());
     const audio = setupAudio(null); // 預覽也能聽到音效+BGM 混音
@@ -2034,6 +2258,8 @@ ${content || "(把你的主題或原始文案貼在這裡)"}`;
       showError("gen-error", "這個瀏覽器不支援影片錄製,請改用桌面版 Chrome。");
       return;
     }
+
+    await ensureParallaxReady(list, setStatus); // 3D 視差場景先把深度備好(在跳分享視窗前)
 
     // 只有「還有句子要用合成語音」時才需要分享分頁音訊;
     // 全部句子都錄好旁白的話,直接用錄音混音,免分享

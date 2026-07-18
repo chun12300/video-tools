@@ -1238,6 +1238,11 @@ legend {
   max-width: 55%;
 }
 
+.depth-status {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
 .rec-live {
   border-color: var(--error) !important;
   color: var(--error) !important;

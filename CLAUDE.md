@@ -130,8 +130,14 @@
   縮圖/預覽/輸出都用 drawImage 九參數版取裁剪範圍。
 - **運鏡** `scene.motion`(`motionSourceRect`):zoom 緩慢放大 1.0→1.08(預設)/
   push 快速推進 1.0→1.25/pan 左右橫移(固定放大 1.12 預留平移空間)/
-  shake 震動(固定放大 1.05,每格 ±6px 隨機位移)/none 固定;
+  shake 震動(固定放大 1.05,每格 ±6px 隨機位移)/parallax 3D 視差/none 固定;
   取樣範圍一律夾在裁剪範圍內,不會露出圖片外的黑邊。
+- **3D 視差運鏡**:transformers.js(動態 import CDN)+ `onnx-community/depth-anything-v2-small`
+  估整張原圖的深度(縮到 768 邊長餵模型,`item.depth` 存灰階 canvas,裁剪改變不用重算、
+  不進專案存檔,`ensureParallaxReady` 在播放/生成前補算);WebGL 位移著色器
+  (`drawParallaxItem`,紋理 FLIP_Y、crop 的 y 要換算 `1-(y+h)/h`)依深度讓前景多移
+  背景反向,uShift ±0.05、基礎放大 1.06→1.10 蓋邊緣;WebGL 不可用/深度沒 ready/
+  模型載入失敗一律靜默退回 zoom(motionSourceRect 把 parallax 當 zoom)。
 - 有圖場景:裁剪範圍畫滿畫面 + 運鏡(進度用估計時長算)+
   字幕(主題色字+黑描邊+半透明黑底,每行約 15 字換行,大小/位置/顏色可調;
   `*星號*` 包住的字用強調色,`styledChars`/`plainText` 分離顯示與朗讀/SRT 文字,
