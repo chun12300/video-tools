@@ -133,7 +133,10 @@
   shake 震動(固定放大 1.05,每格 ±6px 隨機位移)/none 固定;
   取樣範圍一律夾在裁剪範圍內,不會露出圖片外的黑邊。
 - 有圖場景:裁剪範圍畫滿畫面 + 運鏡(進度用估計時長算)+
-  字幕(白字+黑描邊+半透明黑底,每行約 15 字換行,大小/位置可調);
+  字幕(主題色字+黑描邊+半透明黑底,每行約 15 字換行,大小/位置/顏色可調;
+  `*星號*` 包住的字用強調色,`styledChars`/`plainText` 分離顯示與朗讀/SRT 文字,
+  paintLines 以 left-align 分段上色);句間停頓 `settings.scenePad` 可調,
+  轉場 `settings.transition`(none/fade/flash)在 drawCurrent 疊場景開頭遮罩;
   無圖場景:hue 漸層背景+置中大字文字卡(字多自動縮小,**不再疊小字幕**,SRT 照出)。
 - 圖片 >4000px 先縮到 2560 再用(記憶體);`getVoices()` 要等 `voiceschanged`,
   中文語音排序 zh-TW → zh-Hant → zh-HK → 其他 zh。

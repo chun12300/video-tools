@@ -40,6 +40,11 @@
       <p id="split-result" class="ok-msg" hidden></p>
       <p id="step1-error" class="error-msg" hidden></p>
       <button type="button" id="analyze-btn" class="btn btn-primary">🔍 分析腳本</button>
+      <div class="wizard-actions">
+        <button type="button" id="ai-prompt-btn" class="btn"
+          title="複製一段提示詞,貼給 Claude 等 AI 生成分鏡腳本後貼回上面">🤖 複製 AI 腳本提示詞</button>
+        <p id="ai-copy-msg" class="ok-msg" hidden>✅ 已複製!貼到 Claude 等 AI 聊天工具,生成的腳本直接貼回上面的框框。</p>
+      </div>
     </section>
 
     <!-- 步驟 2:設定每個場景 -->
@@ -50,6 +55,10 @@
         每張都能個別裁剪)並選擇運鏡效果;沒有圖片的場景用漸層背景+大字文字卡呈現。用 ↑↓ 調整順序。</p>
       <ol id="scene-list" class="scene-list"></ol>
       <button type="button" id="add-scene-btn" class="btn">＋ 新增場景</button>
+      <button type="button" id="add-hook-btn" class="btn"
+        title="插到最前面:前 3 秒抓住觀眾的標題卡">✨ 加片頭標題卡</button>
+      <button type="button" id="add-cta-btn" class="btn"
+        title="加到最後面:請觀眾追蹤/留言的結尾">📣 加片尾 CTA</button>
       <p id="step2-error" class="error-msg" hidden></p>
       <input type="file" id="scene-img-input" accept="image/*,video/mp4,video/webm" hidden>
       <input type="file" id="scene-sfx-input" accept="audio/*,.mp3,.wav,.ogg" hidden>
@@ -105,8 +114,32 @@
           <label class="chip"><input type="radio" name="sub-pos" value="bottom" checked><span>下方</span></label>
           <label class="chip"><input type="radio" name="sub-pos" value="middle"><span>中間</span></label>
         </div>
-        <p class="list-hint">字幕固定為白字+黑色描邊+半透明黑底,確保任何背景都清楚;
-          沒有圖片的場景以大字文字卡顯示該句文字,不另外疊小字幕。</p>
+        <div class="option-group" role="radiogroup" aria-label="字幕顏色">
+          <span class="option-label">顏色</span>
+          <label class="chip"><input type="radio" name="sub-color" value="#ffffff" checked><span>⚪ 經典白</span></label>
+          <label class="chip"><input type="radio" name="sub-color" value="#ffe14d"><span>🟡 亮黃</span></label>
+          <label class="chip"><input type="radio" name="sub-color" value="#7ef0ff"><span>🔵 青藍</span></label>
+          <label class="chip"><input type="radio" name="sub-color" value="#ffb3d9"><span>🩷 粉紅</span></label>
+        </div>
+        <p class="list-hint">字幕一律加黑色描邊+半透明黑底,任何背景都清楚。
+          在文字裡用 <strong>*星號*</strong> 包住關鍵字會以強調色顯示,例如「今天*超重要*的事」
+          (星號不會唸出來、也不會出現在 SRT)。沒有素材的場景以大字文字卡顯示,不另外疊小字幕。</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>節奏與轉場</legend>
+        <div class="field-row">
+          <label for="pad-range">句間停頓</label>
+          <input type="range" id="pad-range" min="0" max="1.5" step="0.1" value="0.4">
+          <span id="pad-value" class="range-val">0.4 秒</span>
+        </div>
+        <div class="option-group" role="radiogroup" aria-label="場景轉場">
+          <span class="option-label">轉場</span>
+          <label class="chip"><input type="radio" name="transition" value="none" checked><span>硬切(預設)</span></label>
+          <label class="chip"><input type="radio" name="transition" value="fade"><span>黑場淡入</span></label>
+          <label class="chip"><input type="radio" name="transition" value="flash"><span>白閃</span></label>
+        </div>
+        <p class="list-hint">句間停頓=每句唸完後的空拍;轉場效果套用在每個場景的開頭(第一個場景除外)。</p>
       </fieldset>
 
       <div class="wizard-actions">
@@ -119,6 +152,7 @@
     <section class="card" id="step-4" hidden>
       <h2 class="section-title">步驟 4:預覽與輸出</h2>
 
+      <p id="precheck" class="list-hint"></p>
       <div class="canvas-wrap">
         <canvas id="stage" width="1080" height="1920" aria-label="影片預覽畫面"></canvas>
       </div>

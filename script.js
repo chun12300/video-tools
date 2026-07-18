@@ -12,7 +12,6 @@
 
   const W = 1080;
   const H = 1920;
-  const SCENE_PAD_MS = 400;      // 每句語音結束後的緩衝
   const KEN_BURNS = 0.08;        // 場景內圖片緩慢放大幅度(1.0 → 1.08)
   const SUB_MAX_CHARS = 15;      // 字幕每行最多字數
   const IMG_MAX_DIM = 4000;      // 超過就先縮小,避免記憶體問題
@@ -54,7 +53,15 @@
   let sfxPreview = null;  // 進行中的音效試聽
   const bgm = { name: "", buffer: null, blob: null, volume: 0.25 }; // 背景音樂
 
-  const settings = { subSize: "medium", subPos: "bottom" };
+  const SUB_COLORS = ["#ffffff", "#ffe14d", "#7ef0ff", "#ffb3d9"]; // 字幕顏色主題
+  const TRANSITIONS = ["none", "fade", "flash"];                    // 硬切/黑場淡入/白閃
+  const settings = {
+    subSize: "medium",
+    subPos: "bottom",
+    subColor: "#ffffff",
+    transition: "none",
+    scenePad: 0.4, // 句間停頓(秒)
+  };
 
   const stage = $("stage");
   const ctx = stage.getContext("2d");
@@ -170,6 +177,9 @@
       if (d.settings) {
         settings.subSize = d.settings.subSize || settings.subSize;
         settings.subPos = d.settings.subPos || settings.subPos;
+        if (SUB_COLORS.includes(d.settings.subColor)) settings.subColor = d.settings.subColor;
+        if (TRANSITIONS.includes(d.settings.transition)) settings.transition = d.settings.transition;
+        settings.scenePad = numOr(d.settings.scenePad, 0, 1.5, 0.4);
       }
       if (Array.isArray(d.characters) && d.characters.length) {
         characters = d.characters.slice(0, MAX_CHARS).map((c) => ({
@@ -340,7 +350,10 @@
       btn.disabled = s > maxStep;
     });
     if (n === 3) refreshVoices();
-    if (n === 4) drawIdle();
+    if (n === 4) {
+      updatePrecheck();
+      drawIdle();
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -994,6 +1007,63 @@
     sceneListEl.lastElementChild.querySelector(".scene-text").focus();
   });
 
+  // 片頭 Hook / 片尾 CTA 模板(插入預填文字的文字卡場景,可再自行編輯)
+  $("add-hook-btn").addEventListener("click", () => {
+    scenes.unshift(makeScene("*3 秒*看完你就懂!"));
+    renderScenes();
+    const ta = sceneListEl.firstElementChild.querySelector(".scene-text");
+    ta.focus();
+    ta.select();
+  });
+  $("add-cta-btn").addEventListener("click", () => {
+    scenes.push(makeScene("覺得實用的話,*追蹤我*看更多!"));
+    renderScenes();
+    const ta = sceneListEl.lastElementChild.querySelector(".scene-text");
+    ta.focus();
+    ta.select();
+  });
+
+  // ===== AI 腳本提示詞(貼給 Claude 等 AI 生成分鏡腳本)=====
+  function buildAiPrompt() {
+    const content = scriptInput.value.trim();
+    return `請幫我把下面的主題或文案,改寫成直式短影片(約 30~60 秒)的分鏡腳本。
+
+規則:
+- 每句一行;有角色的對話在行首標記「角色名:台詞」(冒號用全形),旁白句不用標
+- 每句不超過 20 個字,口語化、有節奏
+- 第一句必須是 3 秒內抓住人的開場 hook
+- 最後一句是行動呼籲(例如:追蹤、留言、分享)
+- 想強調的關鍵字用 *星號* 包住(每句最多一個)
+- 只輸出腳本文字,不要任何其他說明
+
+主題/文案:
+${content || "(把你的主題或原始文案貼在這裡)"}`;
+  }
+
+  $("ai-prompt-btn").addEventListener("click", async () => {
+    const text = buildAiPrompt();
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch (e) {
+      // 剪貼簿 API 失敗時退回 textarea + execCommand
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
+      ta.remove();
+    }
+    const msg = $("ai-copy-msg");
+    msg.textContent = ok
+      ? "✅ 已複製!貼到 Claude 等 AI 聊天工具,生成的腳本直接貼回上面的框框。"
+      : "⚠️ 複製失敗,請手動全選複製。";
+    msg.hidden = false;
+  });
+
   // ===== 裁剪彈窗 =====
   // 只儲存「裁剪座標」(相對原圖的 x,y,w,h),原圖保留在記憶體中,可隨時重調
   const cropModal = $("crop-modal");
@@ -1528,33 +1598,54 @@
     c.closePath();
   }
 
-  // 逐字換行:同時看字數上限與實際像素寬(中英混排也不爆版)
-  function wrapText(text, maxWidth, maxChars) {
-    const lines = [];
-    let line = "";
+  // 關鍵字標記:*文字* 之間用強調色顯示;星號本身不畫、不唸、不進 SRT
+  function styledChars(text) {
+    const chars = [];
+    let hl = false;
     for (const ch of text) {
-      const test = line + ch;
-      if (line && (test.length > maxChars || ctx.measureText(test).width > maxWidth)) {
+      if (ch === "*" || ch === "*") { hl = !hl; continue; }
+      chars.push({ ch, hl });
+    }
+    return chars;
+  }
+
+  function plainText(text) {
+    return text.replace(/[*＊]/g, "");
+  }
+
+  const lineStr = (line) => line.map((c) => c.ch).join("");
+
+  // 逐字換行(帶樣式):同時看字數上限與實際像素寬(中英混排也不爆版)
+  function wrapStyled(chars, maxWidth, maxChars) {
+    const lines = [];
+    let line = [];
+    for (const c of chars) {
+      const test = lineStr(line) + c.ch;
+      if (line.length && (test.length > maxChars || ctx.measureText(test).width > maxWidth)) {
         lines.push(line);
-        line = ch === " " ? "" : ch;
+        line = c.ch === " " ? [] : [c];
       } else {
-        line = test;
+        line.push(c);
       }
     }
-    if (line.trim()) lines.push(line);
+    if (lineStr(line).trim()) lines.push(line);
     return lines;
   }
 
-  // 白字+黑描邊(+可選半透明黑底),lines 需在同一 font 下先 wrap 好
+  // 強調色:主色已是亮黃時改用橘紅,其他主題用亮黃
+  function highlightColor() {
+    return settings.subColor === "#ffe14d" ? "#ff8a5c" : "#ffe14d";
+  }
+
+  // 主題色字+黑描邊(+可選半透明黑底);lines 是 wrapStyled 的結果
   function paintLines(lines, centerY, px, withBg) {
     if (!lines.length) return;
     ctx.font = `700 ${px}px ${FONT_STACK}`;
-    ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     const lineH = Math.round(px * 1.42);
     const blockH = lineH * lines.length;
     if (withBg) {
-      const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+      const widest = Math.max(...lines.map((l) => ctx.measureText(lineStr(l)).width));
       roundRect(ctx, W / 2 - widest / 2 - 30, centerY - blockH / 2 - 22,
         widest + 60, blockH + 44, 18);
       ctx.fillStyle = "rgba(0,0,0,0.55)";
@@ -1563,11 +1654,29 @@
     ctx.lineJoin = "round";
     ctx.lineWidth = Math.max(4, Math.round(px * 0.13));
     ctx.strokeStyle = "rgba(0,0,0,0.9)";
-    ctx.fillStyle = "#fff";
-    lines.forEach((l, i) => {
+    ctx.textAlign = "left"; // 逐段上色需要自己置中排版
+    lines.forEach((line, i) => {
       const y = centerY - blockH / 2 + lineH * (i + 0.5);
-      ctx.strokeText(l, W / 2, y);
-      ctx.fillText(l, W / 2, y);
+      let x = W / 2 - ctx.measureText(lineStr(line)).width / 2;
+      // 相同顏色的連續字元併成一段畫,避免逐字繪製
+      let run = "";
+      let runHl = line.length ? line[0].hl : false;
+      const flush = () => {
+        if (!run) return;
+        ctx.strokeText(run, x, y);
+        ctx.fillStyle = runHl ? highlightColor() : settings.subColor;
+        ctx.fillText(run, x, y);
+        x += ctx.measureText(run).width;
+        run = "";
+      };
+      for (const c of line) {
+        if (c.hl !== runHl) {
+          flush();
+          runHl = c.hl;
+        }
+        run += c.ch;
+      }
+      flush();
     });
   }
 
@@ -1576,7 +1685,7 @@
     if (!t) return;
     const px = SUB_SIZES[settings.subSize] || SUB_SIZES.medium;
     ctx.font = `700 ${px}px ${FONT_STACK}`;
-    const lines = wrapText(t, W * 0.88, SUB_MAX_CHARS);
+    const lines = wrapStyled(styledChars(t), W * 0.88, SUB_MAX_CHARS);
     const lineH = Math.round(px * 1.42);
     const blockH = lineH * lines.length;
     const centerY = settings.subPos === "middle" ? H / 2 : H * 0.87 - blockH / 2;
@@ -1596,7 +1705,7 @@
     let lines;
     for (;;) {
       ctx.font = `700 ${px}px ${FONT_STACK}`;
-      lines = wrapText(t, W * 0.84, 12);
+      lines = wrapStyled(styledChars(t), W * 0.84, 12);
       if (px <= 52 || lines.length * px * 1.5 <= H * 0.55) break;
       px -= 8;
     }
@@ -1692,14 +1801,25 @@
   // ===== 播放引擎(預覽與錄製共用)=====
   function drawCurrent() {
     if (!play || !play.scene) return;
-    const p = (performance.now() - play.sceneStart) / 1000 / play.estDur;
-    drawScene(play.scene, p);
+    const elapsed = (performance.now() - play.sceneStart) / 1000;
+    drawScene(play.scene, elapsed / play.estDur);
+    // 場景開頭轉場遮罩(第一個場景不套)
+    if (settings.transition !== "none" && play.sceneIndex > 0) {
+      const dur = settings.transition === "flash" ? 0.18 : 0.3;
+      if (elapsed < dur) {
+        const alpha = (1 - elapsed / dur).toFixed(3);
+        ctx.fillStyle = settings.transition === "flash"
+          ? `rgba(255,255,255,${alpha})`
+          : `rgba(0,0,0,${alpha})`;
+        ctx.fillRect(0, 0, W, H);
+      }
+    }
   }
 
   function beginPlay(mode, silent) {
     play = {
       running: true, mode, silent,
-      scene: null, sceneStart: 0, estDur: 1, t0: 0,
+      scene: null, sceneStart: 0, estDur: 1, t0: 0, sceneIndex: 0,
       audio: null,        // setupAudio() 的混音狀態(音效/BGM)
       activeVideo: null,  // 正在播放的影片素材
     };
@@ -1756,29 +1876,30 @@
       const scene = list[i];
       const char = charById(scene.charId); // 每句用指定角色的語音/語速/音調
       const voice = (scene.voice && scene.voice.buffer) ? scene.voice : null;
+      const spoken = plainText(scene.text).trim(); // 關鍵字星號不唸、不進 SRT
       play.scene = scene;
+      play.sceneIndex = i; // 轉場用(第一個場景不套轉場)
       play.sceneStart = performance.now();
       // 有錄音時用實際長度,分鏡切換與運鏡進度都更準
-      play.estDur = voice ? voice.duration : estimateDur(scene.text || "  ", char ? char.rate : 1);
+      play.estDur = voice ? voice.duration : estimateDur(spoken || "  ", char ? char.rate : 1);
       onSceneStart(i, list.length);
-      const text = scene.text.trim();
       const start = (performance.now() - play.t0) / 1000;
       const sfxSrc = startSfx(play.audio, scene); // 場景開始播音效
       if (voice) {
         duckBgm(play.audio, true);
         await playVoiceTrack(play.audio, voice); // 錄音優先於合成語音
         duckBgm(play.audio, false);
-      } else if (text && !play.silent && ttsOk() && char) {
+      } else if (spoken && !play.silent && ttsOk() && char) {
         duckBgm(play.audio, true); // 有語音時 BGM 自動閃避
-        await speakText(text, char);
+        await speakText(spoken, char);
         duckBgm(play.audio, false);
       } else {
         // 無聲模式(或沒有文字的純圖場景):用估計長度撐場
-        await abortableSleep((text ? play.estDur : 2) * 1000);
+        await abortableSleep((spoken ? play.estDur : 2) * 1000);
       }
       const end = (performance.now() - play.t0) / 1000;
-      if (text) timings.push({ text, start, end });
-      await abortableSleep(SCENE_PAD_MS);
+      if (spoken) timings.push({ text: spoken, start, end });
+      await abortableSleep(settings.scenePad * 1000); // 句間停頓(可調)
       stopSfx(sfxSrc); // 場景結束就停,音效較長會被截斷
     }
     return timings;
@@ -1786,6 +1907,34 @@
 
   function setStatus(msg) {
     $("play-status").textContent = msg;
+  }
+
+  // 生成前檢查:預估總長度、提醒沒素材/要用合成語音的場景
+  function updatePrecheck() {
+    const el = $("precheck");
+    const list = usableScenes();
+    if (!list.length) {
+      el.textContent = "";
+      return;
+    }
+    let total = 0.35; // 片頭空白
+    for (const s of list) {
+      const spoken = plainText(s.text).trim();
+      const char = charById(s.charId);
+      total += (s.voice && s.voice.buffer)
+        ? s.voice.duration
+        : (spoken ? estimateDur(spoken, char ? char.rate : 1) : 2);
+      total += settings.scenePad;
+    }
+    if (bgm.buffer) total += 1; // 結尾 BGM 淡出
+    const m = Math.floor(total / 60);
+    const sec = Math.round(total % 60);
+    const noMedia = list.filter((s) => !s.media.length).length;
+    const useTts = list.filter((s) => plainText(s.text).trim() && !(s.voice && s.voice.buffer)).length;
+    let msg = `📋 共 ${list.length} 個場景,預估長度約 ${m ? `${m} 分 ` : ""}${sec} 秒`;
+    if (noMedia) msg += `;${noMedia} 個場景沒有素材(用文字卡呈現)`;
+    msg += useTts ? `;${useTts} 句使用合成語音(需分享分頁音訊)` : ";全部使用錄音,生成免分享分頁";
+    el.textContent = msg;
   }
 
   // ===== 預覽 =====
@@ -2140,6 +2289,18 @@
   document.querySelectorAll('input[name="sub-pos"]').forEach((r) => {
     r.addEventListener("change", () => { settings.subPos = r.value; saveDraft(); });
   });
+  document.querySelectorAll('input[name="sub-color"]').forEach((r) => {
+    r.addEventListener("change", () => { settings.subColor = r.value; saveDraft(); });
+  });
+  document.querySelectorAll('input[name="transition"]').forEach((r) => {
+    r.addEventListener("change", () => { settings.transition = r.value; saveDraft(); });
+  });
+  const padRange = $("pad-range");
+  padRange.addEventListener("input", () => {
+    settings.scenePad = Number(padRange.value);
+    $("pad-value").textContent = `${settings.scenePad} 秒`;
+    saveDraft();
+  });
 
   restoreDraft();
   ensureNarrator(); // 首次使用自動建立預設角色「旁白」
@@ -2148,6 +2309,12 @@
   if (sizeRadio) sizeRadio.checked = true;
   const posRadio = document.querySelector(`input[name="sub-pos"][value="${settings.subPos}"]`);
   if (posRadio) posRadio.checked = true;
+  const colorRadio = document.querySelector(`input[name="sub-color"][value="${settings.subColor}"]`);
+  if (colorRadio) colorRadio.checked = true;
+  const transRadio = document.querySelector(`input[name="transition"][value="${settings.transition}"]`);
+  if (transRadio) transRadio.checked = true;
+  padRange.value = settings.scenePad;
+  $("pad-value").textContent = `${settings.scenePad} 秒`;
 
   checkSupport();
   if (ttsOk()) {
