@@ -42,6 +42,7 @@
   const KOKORO_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
   const FAL_API_BASE = "https://fal.run";
   const FAL_MODEL    = "fal-ai/flux/schnell"; // 4-step fast text-to-image
+  const FAL_KLING    = "fal-ai/kling-video/v1/standard/image-to-video"; // image → 5s video
   const KOKORO_VOICES = [  // 中文語音選項(zf=女聲 zm=男聲)
     { id: "zf_xiaoxiao", label: "小小(女聲,柔和)" },
     { id: "zf_xiaobei",  label: "小北(女聲,溫暖)" },
@@ -71,6 +72,7 @@
   const SUB_COLORS = ["#ffffff", "#ffe14d", "#7ef0ff", "#ffb3d9"]; // 字幕顏色主題
   const TRANSITIONS = ["none", "fade", "flash"];                    // 硬切/黑場淡入/白閃
   const SUB_ANIMS  = ["slide", "type", "none"];                    // 字幕入場動畫
+  const SUB_STYLES = ["classic", "pill"];                          // 字幕底色樣式
   const FILTERS = {                                                // 圖片/影片濾鏡
     none:      "",
     cinematic: "contrast(1.12) saturate(0.82) sepia(0.12)",
@@ -83,6 +85,7 @@
     subPos: "bottom",
     subColor: "#ffffff",
     subAnim: "slide",    // 字幕入場動畫:slide 上滑 / type 打字機 / none 無
+    subStyle: "classic", // 字幕底色:classic 大底框 / pill 膠囊
     imageFilter: "none", // 圖片濾鏡
     transition: "none",
     scenePad: 0.4, // 句間停頓(秒)
@@ -205,6 +208,7 @@
         if (SUB_COLORS.includes(d.settings.subColor)) settings.subColor = d.settings.subColor;
         if (TRANSITIONS.includes(d.settings.transition)) settings.transition = d.settings.transition;
         if (SUB_ANIMS.includes(d.settings.subAnim)) settings.subAnim = d.settings.subAnim;
+        if (SUB_STYLES.includes(d.settings.subStyle)) settings.subStyle = d.settings.subStyle;
         if (d.settings.imageFilter in FILTERS) settings.imageFilter = d.settings.imageFilter;
         settings.scenePad = numOr(d.settings.scenePad, 0, 1.5, 0.4);
       }
@@ -601,6 +605,7 @@
       };
       actions.appendChild(btn("up", "↑", "上移", i === 0));
       actions.appendChild(btn("down", "↓", "下移", i === scenes.length - 1));
+      actions.appendChild(btn("dup", "⿻ 複製", "複製這個場景(含文字、運鏡、素材)"));
       actions.appendChild(btn("merge", "⤵ 併入下一句", "把下一個場景的文字併進這個場景", i === scenes.length - 1));
       actions.appendChild(btn("del", "✕ 刪除"));
 
@@ -651,6 +656,7 @@
         ctrl.appendChild(mbtn("mdel", "✕", "刪除這張圖"));
         if (item.kind === "image") {
           ctrl.appendChild(mbtn("mrmbg", "✂ 去背", "AI 移除圖片背景(純瀏覽器,首次使用需下載模型)"));
+          ctrl.appendChild(mbtn("mkling", "🎬 生影片", "用 Kling AI 把這張圖轉成 5 秒動態影片(需要 fal.ai API Key,約 60~120 秒)"));
         }
         cell.appendChild(mimg);
         cell.appendChild(ctrl);
@@ -847,7 +853,27 @@
             if (mb.isConnected) { mb.disabled = false; mb.textContent = "✂ 去背"; }
             alert("去背失敗:" + e.message);
           });
-        return; // async 完成後才 renderScenes,此處不重繪
+        return;
+      } else if (mact === "mkling") {
+        if (!getFalKey()) {
+          showError("step2-error", "請先在步驟 3 的「fal.ai 設定」輸入 API Key 並儲存");
+          return;
+        }
+        mb.disabled = true;
+        const sceneText = plainText(scene.text).trim();
+        generateKlingVideo(scene.media[mi], sceneText, (msg) => { if (mb.isConnected) mb.textContent = msg; })
+          .then(async (file) => {
+            const videoItem = await loadVideoItem(file);
+            // 用影片素材取代原本的靜態圖片
+            scene.media.splice(mi, 1, videoItem);
+            scene.advOpen = true;
+            renderScenes();
+          })
+          .catch((e) => {
+            if (mb.isConnected) { mb.disabled = false; mb.textContent = "🎬 生影片"; }
+            showError("step2-error", `Kling 生影片失敗:${e.message}`);
+          });
+        return;
       }
       renderScenes();
       return;
@@ -884,7 +910,15 @@
       renderScenes();
       return;
     }
-    if (act === "up" && idx > 0) {
+    if (act === "dup") {
+      const src = scenes[idx];
+      const dup = makeScene(src.text, src.charId);
+      dup.hue = src.hue;
+      dup.motion = src.motion;
+      dup.durOverride = src.durOverride;
+      dup.media = [...src.media]; // 共享素材物件(canvas/img 唯讀,安全)
+      scenes.splice(idx + 1, 0, dup);
+    } else if (act === "up" && idx > 0) {
       [scenes[idx - 1], scenes[idx]] = [scenes[idx], scenes[idx - 1]];
     } else if (act === "down" && idx < scenes.length - 1) {
       [scenes[idx + 1], scenes[idx]] = [scenes[idx], scenes[idx + 1]];
@@ -1996,10 +2030,79 @@ ${source}`;
     return done;
   }
 
-  // ===== fal.ai FLUX AI 生圖 =====
+  // ===== fal.ai 共用工具 =====
 
   function getFalKey() {
     return (localStorage.getItem("fal-api-key") || "").trim();
+  }
+
+  async function uploadToFalStorage(blob, mimeType, key, onStatus) {
+    if (onStatus) onStatus("上傳圖片到 fal.ai…");
+    const initRes = await fetch("https://rest.alpha.fal.ai/storage/upload/initiate", {
+      method: "POST",
+      headers: { "Authorization": `Key ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ content_type: mimeType, file_name: "scene.jpg" }),
+    });
+    if (!initRes.ok) throw new Error("無法取得 fal.ai 上傳連結");
+    const { upload_url, file_url } = await initRes.json();
+    const upRes = await fetch(upload_url, {
+      method: "PUT",
+      headers: { "Content-Type": mimeType },
+      body: blob,
+    });
+    if (!upRes.ok) throw new Error("圖片上傳失敗");
+    return file_url;
+  }
+
+  async function generateKlingVideo(item, sceneText, onStatus) {
+    const key = getFalKey();
+    if (!key) throw new Error("請先在步驟 3 設定 fal.ai API Key");
+    // 把圖片依裁剪框畫到 720×1280 canvas
+    if (onStatus) onStatus("準備圖片…");
+    const { w, h } = imgSize(item.image);
+    const crop = item.crop || { x: 0, y: 0, w, h };
+    const tmpC = document.createElement("canvas");
+    tmpC.width = 720; tmpC.height = 1280;
+    tmpC.getContext("2d").drawImage(item.image, crop.x, crop.y, crop.w, crop.h, 0, 0, 720, 1280);
+    const blob = await new Promise((res) => tmpC.toBlob(res, "image/jpeg", 0.92));
+    const imageUrl = await uploadToFalStorage(blob, "image/jpeg", key, onStatus);
+    // 提交到 queue
+    if (onStatus) onStatus("提交 Kling 生成任務…");
+    const promptText = sceneText
+      ? `${sceneText}, smooth cinematic motion`
+      : "cinematic slow zoom, smooth motion";
+    const submitRes = await fetch(`https://queue.fal.run/${FAL_KLING}`, {
+      method: "POST",
+      headers: { "Authorization": `Key ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ image_url: imageUrl, prompt: promptText, duration: "5", aspect_ratio: "9:16" }),
+    });
+    if (!submitRes.ok) {
+      let msg = `HTTP ${submitRes.status}`;
+      try { const j = await submitRes.json(); msg = j.detail || j.message || msg; } catch {}
+      throw new Error(msg);
+    }
+    const { request_id } = await submitRes.json();
+    // 輪詢結果(Kling 約需 60~120 秒)
+    const base = `https://queue.fal.run/${FAL_KLING}/requests/${request_id}`;
+    for (let i = 0; i < 120; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        const st = await (await fetch(`${base}/status`, { headers: { "Authorization": `Key ${key}` } })).json();
+        if (st.status === "COMPLETED") {
+          const r = await (await fetch(base, { headers: { "Authorization": `Key ${key}` } })).json();
+          const videoUrl = r.video?.url;
+          if (!videoUrl) throw new Error("Kling 未回傳影片 URL");
+          if (onStatus) onStatus("下載生成影片…");
+          const vBlob = await (await fetch(videoUrl)).blob();
+          return new File([vBlob], "kling.mp4", { type: "video/mp4" });
+        }
+        if (st.status === "FAILED") throw new Error(st.error || "Kling 生成失敗");
+      } catch (e) {
+        if (e.message.includes("Kling")) throw e;
+      }
+      if (onStatus) onStatus(`Kling AI 生成中… 已等待 ${(i + 1) * 5} 秒(約 60~120 秒)`);
+    }
+    throw new Error("Kling 生成逾時(超過 10 分鐘)");
   }
 
   async function generateFalImage(prompt, onStatus) {
@@ -2218,36 +2321,50 @@ void main(){
     ctx.textBaseline = "middle";
     const lineH = Math.round(px * 1.42);
     const blockH = lineH * lines.length;
+    const pill = settings.subStyle === "pill";
     if (withBg) {
-      const widest = Math.max(...lines.map((l) => ctx.measureText(lineStr(l)).width));
-      roundRect(ctx, W / 2 - widest / 2 - 30, centerY - blockH / 2 - 22,
-        widest + 60, blockH + 44, 18);
-      ctx.fillStyle = "rgba(0,0,0,0.55)";
-      ctx.fill();
+      if (pill) {
+        // 每行獨立膠囊底色(白底黑字風格)
+        lines.forEach((line, i) => {
+          const lw = ctx.measureText(lineStr(line)).width;
+          const y = centerY - blockH / 2 + lineH * (i + 0.5);
+          const rh = lineH * 0.82;
+          roundRect(ctx, W / 2 - lw / 2 - 22, y - rh / 2, lw + 44, rh, rh / 2);
+          ctx.fillStyle = "rgba(255,255,255,0.93)";
+          ctx.fill();
+        });
+      } else {
+        const widest = Math.max(...lines.map((l) => ctx.measureText(lineStr(l)).width));
+        roundRect(ctx, W / 2 - widest / 2 - 30, centerY - blockH / 2 - 22,
+          widest + 60, blockH + 44, 18);
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fill();
+      }
     }
     ctx.lineJoin = "round";
-    ctx.lineWidth = Math.max(4, Math.round(px * 0.13));
+    const strokeW = Math.max(4, Math.round(px * 0.13));
+    ctx.lineWidth = pill ? 0 : strokeW; // 膠囊樣式不需描邊
     ctx.strokeStyle = "rgba(0,0,0,0.9)";
-    ctx.textAlign = "left"; // 逐段上色需要自己置中排版
+    ctx.textAlign = "left";
     lines.forEach((line, i) => {
       const y = centerY - blockH / 2 + lineH * (i + 0.5);
       let x = W / 2 - ctx.measureText(lineStr(line)).width / 2;
-      // 相同顏色的連續字元併成一段畫,避免逐字繪製
       let run = "";
       let runHl = line.length ? line[0].hl : false;
       const flush = () => {
         if (!run) return;
-        ctx.strokeText(run, x, y);
-        ctx.fillStyle = runHl ? highlightColor() : settings.subColor;
+        if (!pill) ctx.strokeText(run, x, y);
+        // 膠囊樣式:白底所以用深色字;強調字用主題色
+        const fillClr = pill
+          ? (runHl ? highlightColor() : "#111111")
+          : (runHl ? highlightColor() : settings.subColor);
+        ctx.fillStyle = fillClr;
         ctx.fillText(run, x, y);
         x += ctx.measureText(run).width;
         run = "";
       };
       for (const c of line) {
-        if (c.hl !== runHl) {
-          flush();
-          runHl = c.hl;
-        }
+        if (c.hl !== runHl) { flush(); runHl = c.hl; }
         run += c.ch;
       }
       flush();
@@ -2945,6 +3062,9 @@ void main(){
   document.querySelectorAll('input[name="sub-anim"]').forEach((r) => {
     r.addEventListener("change", () => { settings.subAnim = r.value; saveDraft(); });
   });
+  document.querySelectorAll('input[name="sub-style"]').forEach((r) => {
+    r.addEventListener("change", () => { settings.subStyle = r.value; drawIdle(); saveDraft(); });
+  });
   document.querySelectorAll('input[name="img-filter"]').forEach((r) => {
     r.addEventListener("change", () => { settings.imageFilter = r.value; drawIdle(); saveDraft(); });
   });
@@ -2971,6 +3091,8 @@ void main(){
   if (transRadio) transRadio.checked = true;
   const animRadio = document.querySelector(`input[name="sub-anim"][value="${settings.subAnim}"]`);
   if (animRadio) animRadio.checked = true;
+  const styleRadio = document.querySelector(`input[name="sub-style"][value="${settings.subStyle}"]`);
+  if (styleRadio) styleRadio.checked = true;
   const filterRadio = document.querySelector(`input[name="img-filter"][value="${settings.imageFilter}"]`);
   if (filterRadio) filterRadio.checked = true;
   padRange.value = settings.scenePad;
