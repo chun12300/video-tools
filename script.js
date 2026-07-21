@@ -37,6 +37,7 @@
   // 3D 視差:瀏覽器內 AI 深度估計(transformers.js + Depth Anything V2 small)
   const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
   const DEPTH_MODEL = "onnx-community/depth-anything-v2-small";
+  const RMBG_MODEL  = "briaai/RMBG-1.4";                       // AI 去背(image-segmentation)
   const TEST_SENTENCE = "你好,這是我的聲音,請問這樣可以嗎?";
   const CHAR_COLORS = ["#5b8cff", "#ff7a7a", "#5ad19a", "#ffc95c", "#c58bff", "#ff9c6e", "#4dd0e1", "#f06292"];
   // 依語音名稱推測性別(常見中文語音對照表,比對時去掉空白與符號)
@@ -626,6 +627,9 @@
         ctrl.appendChild(mbtn("mleft", "◀", "往前移", mi === 0));
         ctrl.appendChild(mbtn("mright", "▶", "往後移", mi === scene.media.length - 1));
         ctrl.appendChild(mbtn("mdel", "✕", "刪除這張圖"));
+        if (item.kind === "image") {
+          ctrl.appendChild(mbtn("mrmbg", "✂ 去背", "AI 移除圖片背景(純瀏覽器,首次使用需下載模型)"));
+        }
         cell.appendChild(mimg);
         cell.appendChild(ctrl);
         mediaRow.appendChild(cell);
@@ -780,6 +784,15 @@
       } else if (mact === "mdel") {
         releaseMediaItem(scene.media[mi]);
         scene.media.splice(mi, 1);
+      } else if (mact === "mrmbg") {
+        mb.disabled = true;
+        removeBackground(scene.media[mi], (msg) => { if (!mb.isConnected) return; mb.textContent = msg; })
+          .then(() => renderScenes())
+          .catch((e) => {
+            if (mb.isConnected) { mb.disabled = false; mb.textContent = "✂ 去背"; }
+            alert("去背失敗:" + e.message);
+          });
+        return; // async 完成後才 renderScenes,此處不重繪
       }
       renderScenes();
       return;
@@ -1693,6 +1706,9 @@ ${source}`;
   let depthLoading = null;   // 載入中的 promise(避免重複載入)
   let parallaxGL;            // WebGL 繪製器;null = 不支援,undefined = 未初始化
 
+  let rmbgPipe = null;       // AI 去背 pipeline
+  let rmbgLoading = null;
+
   async function getDepthPipeline(onStatus) {
     if (depthPipe) return depthPipe;
     if (!depthLoading) {
@@ -1745,6 +1761,82 @@ ${source}`;
     }
     dctx.putImageData(idata, 0, 0);
     item.depth = dc;
+  }
+
+  // ===== AI 背景去除(RMBG-1.4 via transformers.js,純瀏覽器)=====
+
+  async function getRmbgPipeline(onStatus) {
+    if (rmbgPipe) return rmbgPipe;
+    if (!rmbgLoading) {
+      rmbgLoading = (async () => {
+        if (onStatus) onStatus("載入 AI 去背引擎…");
+        const mod = await import(TRANSFORMERS_CDN);
+        if (mod.env) mod.env.allowLocalModels = false;
+        const pipe = await mod.pipeline("image-segmentation", RMBG_MODEL, {
+          progress_callback: (info) => {
+            if (info && info.status === "progress" && info.total && onStatus) {
+              onStatus(`首次使用需下載去背模型… ${Math.round((info.loaded / info.total) * 100)}%(之後由瀏覽器快取)`);
+            }
+          },
+        });
+        rmbgPipe = pipe;
+        return pipe;
+      })().catch((e) => { rmbgLoading = null; throw e; });
+    }
+    return rmbgLoading;
+  }
+
+  async function removeBackground(item, onStatus) {
+    const { w, h } = imgSize(item.image);
+
+    // 把原圖畫到 canvas 作為模型輸入
+    const inputC = document.createElement("canvas");
+    inputC.width = w; inputC.height = h;
+    inputC.getContext("2d").drawImage(item.image, 0, 0);
+
+    const pipe = await getRmbgPipeline(onStatus);
+    if (onStatus) onStatus("AI 去背中…");
+    const result = await pipe(inputC.toDataURL("image/jpeg", 0.92));
+    const seg = Array.isArray(result) ? result[0] : result;
+    if (!seg || !seg.mask) throw new Error("去背模型回傳結果無效");
+
+    const mask = seg.mask;         // RawImage: { data, width, height, channels }
+    const ch = mask.channels || 1;
+
+    // 把 mask 轉成灰階 canvas,再雙線性縮放到原圖尺寸
+    const mRaw = document.createElement("canvas");
+    mRaw.width = mask.width; mRaw.height = mask.height;
+    const mRawCtx = mRaw.getContext("2d");
+    const mPixels = mRawCtx.createImageData(mask.width, mask.height);
+    for (let i = 0; i < mask.width * mask.height; i++) {
+      const v = mask.data[i * ch];
+      mPixels.data[i * 4] = mPixels.data[i * 4 + 1] = mPixels.data[i * 4 + 2] = v;
+      mPixels.data[i * 4 + 3] = 255;
+    }
+    mRawCtx.putImageData(mPixels, 0, 0);
+
+    const mScaled = document.createElement("canvas");
+    mScaled.width = w; mScaled.height = h;
+    const msCtx = mScaled.getContext("2d");
+    msCtx.imageSmoothingEnabled = true;
+    msCtx.imageSmoothingQuality = "high";
+    msCtx.drawImage(mRaw, 0, 0, w, h);
+    const alphaPixels = msCtx.getImageData(0, 0, w, h).data;
+
+    // 套用 mask 為原圖的 alpha 通道
+    const out = document.createElement("canvas");
+    out.width = w; out.height = h;
+    const octx = out.getContext("2d");
+    octx.drawImage(item.image, 0, 0);
+    const imgPixels = octx.getImageData(0, 0, w, h);
+    for (let i = 0; i < w * h; i++) {
+      imgPixels.data[i * 4 + 3] = alphaPixels[i * 4]; // R channel = alpha
+    }
+    octx.putImageData(imgPixels, 0, 0);
+
+    item.image = out;
+    item.depth = null; // 原深度圖已失效,下次視差才重算
+    makeThumb(item);
   }
 
   // 開始播放/生成前,把用到 3D 視差的場景深度都準備好;個別失敗就跳過(播放時退回緩慢放大)
