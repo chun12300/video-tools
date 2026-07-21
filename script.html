@@ -200,6 +200,18 @@
         <button type="button" id="stop-btn" class="btn" hidden>⏹ 停止</button>
       </div>
 
+      <div class="kokoro-box">
+        <h3>🤖 AI 語音(Kokoro 中文 TTS)</h3>
+        <p class="list-hint">純瀏覽器 AI 語音合成,首次使用需下載約 82MB 模型(之後快取)。<br>
+          生成後無需分享分頁音訊即可錄製影片,音質比瀏覽器 TTS 更穩定自然。</p>
+        <div class="field-row">
+          <label for="kokoro-voice">聲音</label>
+          <select id="kokoro-voice" class="sel-small"></select>
+        </div>
+        <button type="button" id="kokoro-btn" class="btn">🤖 AI 一鍵生成語音</button>
+        <p id="kokoro-status" class="list-hint" hidden></p>
+      </div>
+
       <div class="howto-box">
         <h3>🔊 怎麼把語音錄進影片?(重要)</h3>
         <p>瀏覽器的合成語音無法直接錄音,需要借用「分享分頁音訊」功能。

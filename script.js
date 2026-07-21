@@ -38,6 +38,14 @@
   const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
   const DEPTH_MODEL = "onnx-community/depth-anything-v2-small";
   const RMBG_MODEL  = "briaai/RMBG-1.4";                       // AI 去背(image-segmentation)
+  const KOKORO_CDN  = "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm"; // Kokoro TTS
+  const KOKORO_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
+  const KOKORO_VOICES = [  // 中文語音選項(zf=女聲 zm=男聲)
+    { id: "zf_xiaoxiao", label: "小小(女聲,柔和)" },
+    { id: "zf_xiaobei",  label: "小北(女聲,溫暖)" },
+    { id: "zm_yunxi",    label: "雲希(男聲,自然)" },
+    { id: "zm_yunxia",   label: "雲夏(男聲,低沉)" },
+  ];
   const TEST_SENTENCE = "你好,這是我的聲音,請問這樣可以嗎?";
   const CHAR_COLORS = ["#5b8cff", "#ff7a7a", "#5ad19a", "#ffc95c", "#c58bff", "#ff9c6e", "#4dd0e1", "#f06292"];
   // 依語音名稱推測性別(常見中文語音對照表,比對時去掉空白與符號)
@@ -1718,6 +1726,9 @@ ${source}`;
   let rmbgPipe = null;       // AI 去背 pipeline
   let rmbgLoading = null;
 
+  let kokoroPipe = null;     // Kokoro TTS pipeline
+  let kokoroLoading = null;
+
   async function getDepthPipeline(onStatus) {
     if (depthPipe) return depthPipe;
     if (!depthLoading) {
@@ -1846,6 +1857,40 @@ ${source}`;
     item.image = out;
     item.depth = null; // 原深度圖已失效,下次視差才重算
     makeThumb(item);
+  }
+
+  // ===== Kokoro TTS(中文 AI 語音,純瀏覽器 WASM)=====
+
+  async function getKokoroPipeline(onStatus) {
+    if (kokoroPipe) return kokoroPipe;
+    if (!kokoroLoading) {
+      kokoroLoading = (async () => {
+        if (onStatus) onStatus("載入 Kokoro AI 語音引擎(首次需下載約 82MB,之後快取)…");
+        const { KokoroTTS } = await import(KOKORO_CDN);
+        const tts = await KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q8" });
+        kokoroPipe = tts;
+        return tts;
+      })().catch((e) => { kokoroLoading = null; throw e; });
+    }
+    return kokoroLoading;
+  }
+
+  async function generateKokoroVoices(voice, onStatus) {
+    const pipe = await getKokoroPipeline(onStatus);
+    const list = usableScenes().filter((s) => plainText(s.text).trim());
+    const actx = getAudioCtx();
+    let done = 0;
+    for (const scene of list) {
+      const spoken = plainText(scene.text).trim();
+      if (onStatus) onStatus(`AI 語音生成中… ${done + 1} / ${list.length}`);
+      const output = await pipe.generate(spoken, { voice });
+      // output.audio: Float32Array, output.sampling_rate: number
+      const buffer = actx.createBuffer(1, output.audio.length, output.sampling_rate);
+      buffer.getChannelData(0).set(new Float32Array(output.audio));
+      scene.voice = { blob: null, buffer, duration: buffer.duration };
+      done++;
+    }
+    return done;
   }
 
   // 開始播放/生成前,把用到 3D 視差的場景深度都準備好;個別失敗就跳過(播放時退回緩慢放大)
@@ -2357,6 +2402,33 @@ void main(){
   }
 
   // ===== 預覽 =====
+  // 初始化 Kokoro 語音選單
+  const kokoroSel = $("kokoro-voice");
+  if (kokoroSel) {
+    KOKORO_VOICES.forEach(({ id, label }) => {
+      const opt = document.createElement("option");
+      opt.value = id; opt.textContent = label;
+      kokoroSel.appendChild(opt);
+    });
+  }
+
+  $("kokoro-btn").addEventListener("click", async () => {
+    const btn = $("kokoro-btn");
+    const statusEl = $("kokoro-status");
+    const voice = ($("kokoro-voice") || {}).value || KOKORO_VOICES[0].id;
+    btn.disabled = true;
+    statusEl.hidden = false;
+    try {
+      const n = await generateKokoroVoices(voice, (msg) => { statusEl.textContent = msg; });
+      statusEl.textContent = `✓ 已生成 ${n} 句 Kokoro AI 語音,生成影片時無需分享分頁音訊。`;
+      renderScenes();
+    } catch (e) {
+      statusEl.textContent = "Kokoro 語音生成失敗:" + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   $("preview-btn").addEventListener("click", async () => {
     const list = usableScenes();
     if (!list.length) {
