@@ -76,8 +76,12 @@
         title="插到最前面:前 3 秒抓住觀眾的標題卡">✨ 加片頭標題卡</button>
       <button type="button" id="add-cta-btn" class="btn"
         title="加到最後面:請觀眾追蹤/留言的結尾">📣 加片尾 CTA</button>
+      <button type="button" id="batch-img-btn" class="btn"
+        title="一次選多張圖,依場景順序自動分配">📦 批次配圖</button>
+      <p id="batch-ok-msg" class="ok-msg" hidden></p>
       <p id="step2-error" class="error-msg" hidden></p>
       <input type="file" id="scene-img-input" accept="image/*,video/mp4,video/webm" hidden>
+      <input type="file" id="batch-img-input" accept="image/*,video/mp4,video/webm" multiple hidden>
       <input type="file" id="scene-sfx-input" accept="audio/*,.mp3,.wav,.ogg" hidden>
       <div class="wizard-actions">
         <button type="button" class="btn" data-goto="1">← 上一步</button>

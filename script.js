@@ -260,6 +260,7 @@
         hue: s.hue,
         motion: s.motion,
         charId: s.charId,
+        durOverride: s.durOverride || null,
         sfx: (s.sfx && s.sfx.blob) ? { name: s.sfx.name, volume: s.sfx.volume, blob: s.sfx.blob } : null,
         voice: (s.voice && s.voice.blob) ? { blob: s.voice.blob, duration: s.voice.duration } : null,
         media: s.media.filter((m) => m.blob).map((m) => ({ kind: m.kind, crop: m.crop || null, blob: m.blob })),
@@ -331,6 +332,7 @@
         characters.some((c) => c.id === s.charId) ? s.charId : undefined);
       scene.hue = Number.isFinite(s.hue) ? s.hue : scene.hue;
       scene.motion = MOTIONS[s.motion] ? s.motion : "zoom";
+      scene.durOverride = Number.isFinite(s.durOverride) && s.durOverride > 0 ? s.durOverride : null;
       for (const m of s.media || []) {
         if (scene.media.length >= MAX_MEDIA || !m.blob) continue;
         try {
@@ -440,6 +442,7 @@
       sfx: null,          // 場景音效 { name, buffer(AudioBuffer), volume 0~1 }
       advOpen: false,     // 「素材與運鏡」摺疊狀態(重繪時保留)
       charId: charId || characters[0].id,
+      durOverride: null,  // 手動時長覆寫(秒),null = 自動估算
     };
   }
 
@@ -775,6 +778,36 @@
       }
       adv.appendChild(voiceRow);
 
+      // 手動時長覆寫
+      const durRow = document.createElement("div");
+      durRow.className = "sfx-row";
+      const durLabel = document.createElement("label");
+      durLabel.textContent = "⏱ 時長";
+      durLabel.style.fontSize = "0.8rem";
+      durLabel.style.color = "var(--text-dim)";
+      const durInput = document.createElement("input");
+      durInput.type = "number";
+      durInput.className = "dur-input";
+      durInput.min = "0.5";
+      durInput.max = "60";
+      durInput.step = "0.5";
+      durInput.placeholder = "自動";
+      if (scene.durOverride) durInput.value = scene.durOverride;
+      durInput.title = "手動設定這個場景的時長(秒),留空=依字數自動估算";
+      durInput.addEventListener("change", () => {
+        const v = parseFloat(durInput.value);
+        scene.durOverride = (Number.isFinite(v) && v >= 0.5) ? v : null;
+        if (!scene.durOverride) durInput.value = "";
+        scheduleProjectSave();
+      });
+      const durHint = document.createElement("span");
+      durHint.className = "scene-kind";
+      durHint.textContent = "秒 (留空=自動)";
+      durRow.appendChild(durLabel);
+      durRow.appendChild(durInput);
+      durRow.appendChild(durHint);
+      adv.appendChild(durRow);
+
       body.appendChild(head);
       body.appendChild(ta);
       body.appendChild(adv);
@@ -933,6 +966,41 @@
       renderScenes();
     } catch (e) {
       showError("step2-error", `音效讀取失敗:${e.message || "不明錯誤"}`);
+    }
+  });
+
+  // ===== 批次配圖 =====
+  $("batch-img-btn").addEventListener("click", () => { $("batch-img-input").click(); });
+  $("batch-img-input").addEventListener("change", async (ev) => {
+    const files = Array.from(ev.target.files);
+    ev.target.value = "";
+    if (!files.length) return;
+    showError("step2-error", "");
+    const btn = $("batch-img-btn");
+    btn.disabled = true;
+    btn.textContent = "配圖中…";
+    // 依場景順序:有空位就填,滿了跳下一個
+    let ti = 0;
+    let assigned = 0;
+    const targets = scenes.filter((s) => s.media.length < MAX_MEDIA);
+    for (const file of files) {
+      if (ti >= targets.length) break;
+      try {
+        const item = file.type.startsWith("video/") ? await loadVideoItem(file) : await loadMediaItem(file);
+        targets[ti].media.push(item);
+        targets[ti].advOpen = true;
+        assigned++;
+        if (targets[ti].media.length >= MAX_MEDIA) ti++;
+      } catch (e) { /* 跳過讀取失敗的檔案 */ }
+    }
+    btn.disabled = false;
+    btn.textContent = "📦 批次配圖";
+    if (assigned === 0) {
+      showError("step2-error", "所有場景素材都已滿,或圖片讀取失敗");
+    } else {
+      renderScenes();
+      const okMsg = $("batch-ok-msg");
+      if (okMsg) { okMsg.textContent = `✅ 已配置 ${assigned} 張圖到 ${Math.min(assigned, targets.length)} 個場景`; okMsg.hidden = false; setTimeout(() => { okMsg.hidden = true; }, 4000); }
     }
   });
 
@@ -2415,8 +2483,9 @@ void main(){
       play.scene = scene;
       play.sceneIndex = i; // 轉場用(第一個場景不套轉場)
       play.sceneStart = performance.now();
-      // 有錄音時用實際長度,分鏡切換與運鏡進度都更準
-      play.estDur = voice ? voice.duration : estimateDur(spoken || "  ", char ? char.rate : 1);
+      // 有錄音時用實際長度;有手動時長覆寫時使用覆寫值;否則按字數估算
+      play.estDur = voice ? voice.duration
+        : (scene.durOverride || estimateDur(spoken || "  ", char ? char.rate : 1));
       onSceneStart(i, list.length);
       const start = (performance.now() - play.t0) / 1000;
       const sfxSrc = startSfx(play.audio, scene); // 場景開始播音效
@@ -2430,7 +2499,7 @@ void main(){
         duckBgm(play.audio, false);
       } else {
         // 無聲模式(或沒有文字的純圖場景):用估計長度撐場
-        await abortableSleep((spoken ? play.estDur : 2) * 1000);
+        await abortableSleep((spoken ? play.estDur : (scene.durOverride || 2)) * 1000);
       }
       const end = (performance.now() - play.t0) / 1000;
       if (spoken) timings.push({ text: spoken, start, end });
@@ -2456,9 +2525,10 @@ void main(){
     for (const s of list) {
       const spoken = plainText(s.text).trim();
       const char = charById(s.charId);
-      total += (s.voice && s.voice.buffer)
-        ? s.voice.duration
-        : (spoken ? estimateDur(spoken, char ? char.rate : 1) : 2);
+      total += s.durOverride
+        ? s.durOverride
+        : (s.voice && s.voice.buffer) ? s.voice.duration
+          : (spoken ? estimateDur(spoken, char ? char.rate : 1) : 2);
       total += settings.scenePad;
     }
     if (bgm.buffer) total += 1; // 結尾 BGM 淡出
