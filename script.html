@@ -150,6 +150,32 @@
       </fieldset>
 
       <fieldset>
+        <legend>影像效果</legend>
+        <div class="option-group" role="radiogroup" aria-label="圖片濾鏡">
+          <span class="option-label">濾鏡</span>
+          <label class="chip"><input type="radio" name="img-filter" value="none" checked><span>無</span></label>
+          <label class="chip"><input type="radio" name="img-filter" value="cinematic"><span>🎬 電影感</span></label>
+          <label class="chip"><input type="radio" name="img-filter" value="warm"><span>🟠 暖色調</span></label>
+          <label class="chip"><input type="radio" name="img-filter" value="vintage"><span>📷 復古</span></label>
+          <label class="chip"><input type="radio" name="img-filter" value="bw"><span>⬛ 黑白</span></label>
+        </div>
+        <p class="list-hint">套用在所有場景的圖片與影片素材;字幕、背景文字卡不受影響。切換時右側預覽即時更新。</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>🎨 fal.ai AI 生圖設定</legend>
+        <p class="list-hint">設定後,步驟 2 每個場景都有「🎨 AI 生圖」按鈕,一鍵用 FLUX 根據文案生成配圖。<br>
+          API Key 只存在瀏覽器本機(localStorage),不會上傳或傳送到任何地方。</p>
+        <div class="field-row">
+          <label for="fal-key-input">API Key</label>
+          <input type="password" id="fal-key-input" class="fal-key-input" placeholder="key-xxxxxxxx…" autocomplete="off">
+          <button type="button" id="fal-key-save" class="btn btn-small">儲存</button>
+        </div>
+        <p id="fal-key-status" class="list-hint" hidden></p>
+        <p class="list-hint">沒有 Key?去 <strong>fal.ai → 右上角 → Settings → API Keys</strong> 建立。</p>
+      </fieldset>
+
+      <fieldset>
         <legend>節奏與轉場</legend>
         <div class="field-row">
           <label for="pad-range">句間停頓</label>
@@ -185,6 +211,18 @@
         <button type="button" class="btn" data-goto="3">← 上一步</button>
         <button type="button" id="preview-btn" class="btn">▶ 預覽</button>
         <button type="button" id="stop-btn" class="btn" hidden>⏹ 停止</button>
+      </div>
+
+      <div class="kokoro-box">
+        <h3>🤖 AI 語音(Kokoro 中文 TTS)</h3>
+        <p class="list-hint">純瀏覽器 AI 語音合成,首次使用需下載約 82MB 模型(之後快取)。<br>
+          生成後無需分享分頁音訊即可錄製影片,音質比瀏覽器 TTS 更穩定自然。</p>
+        <div class="field-row">
+          <label for="kokoro-voice">聲音</label>
+          <select id="kokoro-voice" class="sel-small"></select>
+        </div>
+        <button type="button" id="kokoro-btn" class="btn">🤖 AI 一鍵生成語音</button>
+        <p id="kokoro-status" class="list-hint" hidden></p>
       </div>
 
       <div class="howto-box">

@@ -38,6 +38,16 @@
   const TRANSFORMERS_CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
   const DEPTH_MODEL = "onnx-community/depth-anything-v2-small";
   const RMBG_MODEL  = "briaai/RMBG-1.4";                       // AI 去背(image-segmentation)
+  const KOKORO_CDN  = "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm"; // Kokoro TTS
+  const KOKORO_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
+  const FAL_API_BASE = "https://fal.run";
+  const FAL_MODEL    = "fal-ai/flux/schnell"; // 4-step fast text-to-image
+  const KOKORO_VOICES = [  // 中文語音選項(zf=女聲 zm=男聲)
+    { id: "zf_xiaoxiao", label: "小小(女聲,柔和)" },
+    { id: "zf_xiaobei",  label: "小北(女聲,溫暖)" },
+    { id: "zm_yunxi",    label: "雲希(男聲,自然)" },
+    { id: "zm_yunxia",   label: "雲夏(男聲,低沉)" },
+  ];
   const TEST_SENTENCE = "你好,這是我的聲音,請問這樣可以嗎?";
   const CHAR_COLORS = ["#5b8cff", "#ff7a7a", "#5ad19a", "#ffc95c", "#c58bff", "#ff9c6e", "#4dd0e1", "#f06292"];
   // 依語音名稱推測性別(常見中文語音對照表,比對時去掉空白與符號)
@@ -61,11 +71,19 @@
   const SUB_COLORS = ["#ffffff", "#ffe14d", "#7ef0ff", "#ffb3d9"]; // 字幕顏色主題
   const TRANSITIONS = ["none", "fade", "flash"];                    // 硬切/黑場淡入/白閃
   const SUB_ANIMS  = ["slide", "type", "none"];                    // 字幕入場動畫
+  const FILTERS = {                                                // 圖片/影片濾鏡
+    none:      "",
+    cinematic: "contrast(1.12) saturate(0.82) sepia(0.12)",
+    warm:      "sepia(0.18) saturate(1.25) brightness(1.06)",
+    vintage:   "sepia(0.45) contrast(1.08) brightness(0.92) saturate(0.75)",
+    bw:        "grayscale(1) contrast(1.08)",
+  };
   const settings = {
     subSize: "medium",
     subPos: "bottom",
     subColor: "#ffffff",
-    subAnim: "slide",   // 字幕入場動畫:slide 上滑 / type 打字機 / none 無
+    subAnim: "slide",    // 字幕入場動畫:slide 上滑 / type 打字機 / none 無
+    imageFilter: "none", // 圖片濾鏡
     transition: "none",
     scenePad: 0.4, // 句間停頓(秒)
   };
@@ -187,6 +205,7 @@
         if (SUB_COLORS.includes(d.settings.subColor)) settings.subColor = d.settings.subColor;
         if (TRANSITIONS.includes(d.settings.transition)) settings.transition = d.settings.transition;
         if (SUB_ANIMS.includes(d.settings.subAnim)) settings.subAnim = d.settings.subAnim;
+        if (d.settings.imageFilter in FILTERS) settings.imageFilter = d.settings.imageFilter;
         settings.scenePad = numOr(d.settings.scenePad, 0, 1.5, 0.4);
       }
       if (Array.isArray(d.characters) && d.characters.length) {
@@ -638,6 +657,9 @@
         const addBtn = btn("addimg", "＋ 加素材", `圖片或影片片段(mp4/webm ≤50MB),一個場景最多 ${MAX_MEDIA} 個`);
         addBtn.classList.add("media-add");
         mediaRow.appendChild(addBtn);
+        const aiImgBtn = btn("aiimg", "🎨 AI 生圖", "用 fal.ai FLUX 根據這句文案生成配圖(需要 API Key)");
+        aiImgBtn.classList.add("media-add");
+        mediaRow.appendChild(aiImgBtn);
       }
       adv.appendChild(mediaRow);
       const advHint = document.createElement("p");
@@ -842,6 +864,36 @@
       pendingImgSceneId = scenes[idx].id;
       $("scene-img-input").click();
       return; // 選完檔案才重繪
+    } else if (act === "aiimg") {
+      const scene = scenes[idx];
+      if (scene.media.length >= MAX_MEDIA) {
+        showError("step2-error", `一個場景最多 ${MAX_MEDIA} 個素材`);
+        return;
+      }
+      if (!getFalKey()) {
+        showError("step2-error", "請先在步驟 3 的「fal.ai 設定」輸入 API Key 並儲存");
+        return;
+      }
+      const aiBtn = li.querySelector('[data-act="aiimg"]');
+      if (aiBtn) { aiBtn.disabled = true; aiBtn.textContent = "⏳ 生成中…"; }
+      const spoken = plainText(scene.text).trim();
+      const prompt = `${spoken}, portrait vertical frame, cinematic, high quality, photorealistic, 9:16`;
+      generateFalImage(prompt, (msg) => {
+        if (aiBtn && aiBtn.isConnected) aiBtn.textContent = msg;
+      }).then(async (file) => {
+        if (scene.media.length >= MAX_MEDIA) return;
+        const item = await loadMediaItem(file);
+        scene.media.push(item);
+        scene.advOpen = true;
+        renderScenes();
+      }).catch((e) => {
+        showError("step2-error", `AI 生圖失敗:${e.message}`);
+        if (aiBtn && aiBtn.isConnected) {
+          aiBtn.disabled = false;
+          aiBtn.textContent = "🎨 AI 生圖";
+        }
+      });
+      return;
     }
     renderScenes();
   });
@@ -1709,6 +1761,9 @@ ${source}`;
   let rmbgPipe = null;       // AI 去背 pipeline
   let rmbgLoading = null;
 
+  let kokoroPipe = null;     // Kokoro TTS pipeline
+  let kokoroLoading = null;
+
   async function getDepthPipeline(onStatus) {
     if (depthPipe) return depthPipe;
     if (!depthLoading) {
@@ -1837,6 +1892,76 @@ ${source}`;
     item.image = out;
     item.depth = null; // 原深度圖已失效,下次視差才重算
     makeThumb(item);
+  }
+
+  // ===== Kokoro TTS(中文 AI 語音,純瀏覽器 WASM)=====
+
+  async function getKokoroPipeline(onStatus) {
+    if (kokoroPipe) return kokoroPipe;
+    if (!kokoroLoading) {
+      kokoroLoading = (async () => {
+        if (onStatus) onStatus("載入 Kokoro AI 語音引擎(首次需下載約 82MB,之後快取)…");
+        const { KokoroTTS } = await import(KOKORO_CDN);
+        const tts = await KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q8" });
+        kokoroPipe = tts;
+        return tts;
+      })().catch((e) => { kokoroLoading = null; throw e; });
+    }
+    return kokoroLoading;
+  }
+
+  async function generateKokoroVoices(voice, onStatus) {
+    const pipe = await getKokoroPipeline(onStatus);
+    const list = usableScenes().filter((s) => plainText(s.text).trim());
+    const actx = getAudioCtx();
+    let done = 0;
+    for (const scene of list) {
+      const spoken = plainText(scene.text).trim();
+      if (onStatus) onStatus(`AI 語音生成中… ${done + 1} / ${list.length}`);
+      const output = await pipe.generate(spoken, { voice });
+      // output.audio: Float32Array, output.sampling_rate: number
+      const buffer = actx.createBuffer(1, output.audio.length, output.sampling_rate);
+      buffer.getChannelData(0).set(new Float32Array(output.audio));
+      scene.voice = { blob: null, buffer, duration: buffer.duration };
+      done++;
+    }
+    return done;
+  }
+
+  // ===== fal.ai FLUX AI 生圖 =====
+
+  function getFalKey() {
+    return (localStorage.getItem("fal-api-key") || "").trim();
+  }
+
+  async function generateFalImage(prompt, onStatus) {
+    const key = getFalKey();
+    if (!key) throw new Error("請先在步驟 3「fal.ai 設定」輸入 API Key");
+    if (onStatus) onStatus("🎨 AI 生圖中…(約 3~10 秒)");
+    const res = await fetch(`${FAL_API_BASE}/${FAL_MODEL}`, {
+      method: "POST",
+      headers: { "Authorization": `Key ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        image_size: "portrait_16_9",  // 720×1280 直式 9:16
+        num_inference_steps: 4,
+        num_images: 1,
+        enable_safety_checker: false,
+      }),
+    });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const j = await res.json(); msg = j.detail || j.message || msg; } catch {}
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    const imageUrl = data.images?.[0]?.url;
+    if (!imageUrl) throw new Error("fal.ai 未回傳圖片 URL");
+    if (onStatus) onStatus("下載生成圖片…");
+    const imgRes = await fetch(imageUrl);
+    if (!imgRes.ok) throw new Error("圖片下載失敗");
+    const blob = await imgRes.blob();
+    return new File([blob], "fal-ai.jpg", { type: blob.type || "image/jpeg" });
   }
 
   // 開始播放/生成前,把用到 3D 視差的場景深度都準備好;個別失敗就跳過(播放時退回緩慢放大)
@@ -2158,6 +2283,9 @@ void main(){
       const idx = Math.min(Math.floor(p * n), n - 1);
       const segP = clamp(p * n - idx, 0, 1);
       const item = scene.media[idx];
+      // 圖片/影片濾鏡:僅套在媒體圖層,字幕不受影響
+      const flt = FILTERS[settings.imageFilter];
+      if (flt) ctx.filter = flt;
       if (item.kind === "video") {
         // 播放中才驅動影片:切到這個素材時從頭播,長了會被切、短了 loop 補滿
         if (play && play.running && play.activeVideo !== item) {
@@ -2179,6 +2307,7 @@ void main(){
           ctx.drawImage(item.image, r.sx, r.sy, r.sw, r.sh, 0, 0, W, H);
         }
       }
+      if (flt) ctx.filter = "none"; // 重設,避免影響字幕
       drawSubtitle(scene.text, elapsed);
     } else {
       drawTextCard(scene);
@@ -2343,7 +2472,49 @@ void main(){
     el.textContent = msg;
   }
 
+  // ===== fal.ai API Key =====
+  const falKeyInput = $("fal-key-input");
+  if (falKeyInput) {
+    falKeyInput.value = getFalKey();
+    $("fal-key-save").addEventListener("click", () => {
+      const key = falKeyInput.value.trim();
+      if (key) { localStorage.setItem("fal-api-key", key); }
+      else { localStorage.removeItem("fal-api-key"); }
+      const st = $("fal-key-status");
+      st.hidden = false;
+      st.textContent = key ? "✅ API Key 已儲存,回步驟 2 按「🎨 AI 生圖」即可使用" : "已清除 API Key";
+      setTimeout(() => { if (st.isConnected) st.hidden = true; }, 4000);
+    });
+  }
+
   // ===== 預覽 =====
+  // 初始化 Kokoro 語音選單
+  const kokoroSel = $("kokoro-voice");
+  if (kokoroSel) {
+    KOKORO_VOICES.forEach(({ id, label }) => {
+      const opt = document.createElement("option");
+      opt.value = id; opt.textContent = label;
+      kokoroSel.appendChild(opt);
+    });
+  }
+
+  $("kokoro-btn").addEventListener("click", async () => {
+    const btn = $("kokoro-btn");
+    const statusEl = $("kokoro-status");
+    const voice = ($("kokoro-voice") || {}).value || KOKORO_VOICES[0].id;
+    btn.disabled = true;
+    statusEl.hidden = false;
+    try {
+      const n = await generateKokoroVoices(voice, (msg) => { statusEl.textContent = msg; });
+      statusEl.textContent = `✓ 已生成 ${n} 句 Kokoro AI 語音,生成影片時無需分享分頁音訊。`;
+      renderScenes();
+    } catch (e) {
+      statusEl.textContent = "Kokoro 語音生成失敗:" + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   $("preview-btn").addEventListener("click", async () => {
     const list = usableScenes();
     if (!list.length) {
@@ -2704,6 +2875,9 @@ void main(){
   document.querySelectorAll('input[name="sub-anim"]').forEach((r) => {
     r.addEventListener("change", () => { settings.subAnim = r.value; saveDraft(); });
   });
+  document.querySelectorAll('input[name="img-filter"]').forEach((r) => {
+    r.addEventListener("change", () => { settings.imageFilter = r.value; drawIdle(); saveDraft(); });
+  });
   document.querySelectorAll('input[name="transition"]').forEach((r) => {
     r.addEventListener("change", () => { settings.transition = r.value; saveDraft(); });
   });
@@ -2727,6 +2901,8 @@ void main(){
   if (transRadio) transRadio.checked = true;
   const animRadio = document.querySelector(`input[name="sub-anim"][value="${settings.subAnim}"]`);
   if (animRadio) animRadio.checked = true;
+  const filterRadio = document.querySelector(`input[name="img-filter"][value="${settings.imageFilter}"]`);
+  if (filterRadio) filterRadio.checked = true;
   padRange.value = settings.scenePad;
   $("pad-value").textContent = `${settings.scenePad} 秒`;
 
