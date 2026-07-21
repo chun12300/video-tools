@@ -57,9 +57,13 @@
           <input type="text" id="tpl-topic" class="tpl-topic" placeholder="例如:租屋族省錢技巧、咖啡機開箱…">
         </div>
         <div class="wizard-actions">
-          <button type="button" id="ai-prompt-btn" class="btn"
-            title="複製一段提示詞,貼給 Claude 等 AI 生成分鏡腳本後貼回上面">🤖 複製 AI 腳本提示詞</button>
-          <p id="ai-copy-msg" class="ok-msg" hidden>✅ 已複製!貼到 Claude 等 AI 聊天工具,生成的腳本直接貼回上面的框框。</p>
+          <button type="button" id="ai-prompt-btn" class="btn">🤖 產生 AI 提示詞</button>
+        </div>
+        <div id="ai-prompt-box" hidden>
+          <p class="list-hint" style="margin-bottom:6px;">👇 複製下面這段提示詞,貼到 <strong>Claude / ChatGPT</strong> 讓 AI 幫你寫腳本,再把生成的腳本貼回上面的框框:</p>
+          <textarea id="ai-prompt-text" class="script-input" rows="8" readonly></textarea>
+          <button type="button" id="ai-prompt-copy" class="btn btn-primary" style="margin-top:8px;">📋 一鍵複製</button>
+          <p id="ai-copy-msg" class="ok-msg" hidden></p>
         </div>
       </fieldset>
     </section>
@@ -76,8 +80,12 @@
         title="插到最前面:前 3 秒抓住觀眾的標題卡">✨ 加片頭標題卡</button>
       <button type="button" id="add-cta-btn" class="btn"
         title="加到最後面:請觀眾追蹤/留言的結尾">📣 加片尾 CTA</button>
+      <button type="button" id="batch-img-btn" class="btn"
+        title="一次選多張圖,依場景順序自動分配">📦 批次配圖</button>
+      <p id="batch-ok-msg" class="ok-msg" hidden></p>
       <p id="step2-error" class="error-msg" hidden></p>
       <input type="file" id="scene-img-input" accept="image/*,video/mp4,video/webm" hidden>
+      <input type="file" id="batch-img-input" accept="image/*,video/mp4,video/webm" multiple hidden>
       <input type="file" id="scene-sfx-input" accept="audio/*,.mp3,.wav,.ogg" hidden>
       <div class="wizard-actions">
         <button type="button" class="btn" data-goto="1">← 上一步</button>
@@ -137,6 +145,11 @@
           <label class="chip"><input type="radio" name="sub-color" value="#ffe14d"><span>🟡 亮黃</span></label>
           <label class="chip"><input type="radio" name="sub-color" value="#7ef0ff"><span>🔵 青藍</span></label>
           <label class="chip"><input type="radio" name="sub-color" value="#ffb3d9"><span>🩷 粉紅</span></label>
+        </div>
+        <div class="option-group" role="radiogroup" aria-label="字幕底色樣式">
+          <span class="option-label">底色</span>
+          <label class="chip"><input type="radio" name="sub-style" value="classic" checked><span>▬ 大底框</span></label>
+          <label class="chip"><input type="radio" name="sub-style" value="pill"><span>💊 膠囊(剪映風)</span></label>
         </div>
         <div class="option-group" role="radiogroup" aria-label="字幕入場動畫">
           <span class="option-label">入場</span>
