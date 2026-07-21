@@ -57,9 +57,13 @@
           <input type="text" id="tpl-topic" class="tpl-topic" placeholder="例如:租屋族省錢技巧、咖啡機開箱…">
         </div>
         <div class="wizard-actions">
-          <button type="button" id="ai-prompt-btn" class="btn"
-            title="複製一段提示詞,貼給 Claude 等 AI 生成分鏡腳本後貼回上面">🤖 複製 AI 腳本提示詞</button>
-          <p id="ai-copy-msg" class="ok-msg" hidden>✅ 已複製!貼到 Claude 等 AI 聊天工具,生成的腳本直接貼回上面的框框。</p>
+          <button type="button" id="ai-prompt-btn" class="btn">🤖 產生 AI 提示詞</button>
+        </div>
+        <div id="ai-prompt-box" hidden>
+          <p class="list-hint" style="margin-bottom:6px;">👇 複製下面這段提示詞,貼到 <strong>Claude / ChatGPT</strong> 讓 AI 幫你寫腳本,再把生成的腳本貼回上面的框框:</p>
+          <textarea id="ai-prompt-text" class="script-input" rows="8" readonly></textarea>
+          <button type="button" id="ai-prompt-copy" class="btn btn-primary" style="margin-top:8px;">📋 一鍵複製</button>
+          <p id="ai-copy-msg" class="ok-msg" hidden></p>
         </div>
       </fieldset>
     </section>

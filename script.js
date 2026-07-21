@@ -1308,27 +1308,27 @@ ${source}`;
   });
   updateTplDesc();
 
-  $("ai-prompt-btn").addEventListener("click", async () => {
+  $("ai-prompt-btn").addEventListener("click", () => {
     const text = buildAiPrompt();
+    $("ai-prompt-text").value = text;
+    $("ai-prompt-box").hidden = false;
+    $("ai-copy-msg").hidden = true;
+    $("ai-prompt-text").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+
+  $("ai-prompt-copy").addEventListener("click", async () => {
+    const text = $("ai-prompt-text").value;
+    const msg = $("ai-copy-msg");
     let ok = false;
     try {
       await navigator.clipboard.writeText(text);
       ok = true;
     } catch (e) {
-      // 剪貼簿 API 失敗時退回 textarea + execCommand
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
+      const ta = $("ai-prompt-text");
       ta.select();
       try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
-      ta.remove();
     }
-    const msg = $("ai-copy-msg");
-    msg.textContent = ok
-      ? "✅ 已複製!貼到 Claude 等 AI 聊天工具,生成的腳本直接貼回上面的框框。"
-      : "⚠️ 複製失敗,請手動全選複製。";
+    msg.textContent = ok ? "✅ 已複製!去貼到 Claude / ChatGPT,把生成的腳本貼回上面的框框。" : "⚠️ 複製失敗,請手動全選後複製。";
     msg.hidden = false;
   });
 
