@@ -59,10 +59,12 @@
 
   const SUB_COLORS = ["#ffffff", "#ffe14d", "#7ef0ff", "#ffb3d9"]; // 字幕顏色主題
   const TRANSITIONS = ["none", "fade", "flash"];                    // 硬切/黑場淡入/白閃
+  const SUB_ANIMS  = ["slide", "type", "none"];                    // 字幕入場動畫
   const settings = {
     subSize: "medium",
     subPos: "bottom",
     subColor: "#ffffff",
+    subAnim: "slide",   // 字幕入場動畫:slide 上滑 / type 打字機 / none 無
     transition: "none",
     scenePad: 0.4, // 句間停頓(秒)
   };
@@ -183,6 +185,7 @@
         settings.subPos = d.settings.subPos || settings.subPos;
         if (SUB_COLORS.includes(d.settings.subColor)) settings.subColor = d.settings.subColor;
         if (TRANSITIONS.includes(d.settings.transition)) settings.transition = d.settings.transition;
+        if (SUB_ANIMS.includes(d.settings.subAnim)) settings.subAnim = d.settings.subAnim;
         settings.scenePad = numOr(d.settings.scenePad, 0, 1.5, 0.4);
       }
       if (Array.isArray(d.characters) && d.characters.length) {
@@ -1966,16 +1969,36 @@ void main(){
     });
   }
 
-  function drawSubtitle(text) {
+  function drawSubtitle(text, elapsed) {
     const t = text.trim();
     if (!t) return;
     const px = SUB_SIZES[settings.subSize] || SUB_SIZES.medium;
     ctx.font = `700 ${px}px ${FONT_STACK}`;
-    const lines = wrapStyled(styledChars(t), W * 0.88, SUB_MAX_CHARS);
+    let chars = styledChars(t);
+
+    // 打字機:依 elapsed 逐步顯示字元,0.8s 內全部揭完
+    if (settings.subAnim === "type") {
+      const ratio = Math.min(elapsed / 0.8, 1);
+      chars = chars.slice(0, Math.max(1, Math.round(ratio * chars.length)));
+    }
+
+    const lines = wrapStyled(chars, W * 0.88, SUB_MAX_CHARS);
     const lineH = Math.round(px * 1.42);
     const blockH = lineH * lines.length;
     const centerY = settings.subPos === "middle" ? H / 2 : H * 0.87 - blockH / 2;
-    paintLines(lines, centerY, px, true);
+
+    // 上滑淡入:0.22s ease-out cubic
+    if (settings.subAnim === "slide") {
+      const a  = Math.min(elapsed / 0.22, 1);
+      const ease = 1 - Math.pow(1 - a, 3);
+      ctx.save();
+      ctx.globalAlpha = ease;
+      ctx.translate(0, (1 - ease) * 32);
+      paintLines(lines, centerY, px, true);
+      ctx.restore();
+    } else {
+      paintLines(lines, centerY, px, true);
+    }
   }
 
   // 沒有圖片的場景:漸層背景+置中大字文字卡(字太多會自動縮小)
@@ -2033,7 +2056,7 @@ void main(){
     ctx.drawImage(el, (W - vw * s) / 2, (H - vh * s) / 2, vw * s, vh * s);
   }
 
-  function drawScene(scene, progress) {
+  function drawScene(scene, progress, elapsed = Infinity) {
     const p = clamp(progress, 0, 1);
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, W, H);
@@ -2064,7 +2087,7 @@ void main(){
           ctx.drawImage(item.image, r.sx, r.sy, r.sw, r.sh, 0, 0, W, H);
         }
       }
-      drawSubtitle(scene.text);
+      drawSubtitle(scene.text, elapsed);
     } else {
       drawTextCard(scene);
     }
@@ -2093,7 +2116,7 @@ void main(){
   function drawCurrent() {
     if (!play || !play.scene) return;
     const elapsed = (performance.now() - play.sceneStart) / 1000;
-    drawScene(play.scene, elapsed / play.estDur);
+    drawScene(play.scene, elapsed / play.estDur, elapsed);
     // 場景開頭轉場遮罩(第一個場景不套)
     if (settings.transition !== "none" && play.sceneIndex > 0) {
       const dur = settings.transition === "flash" ? 0.18 : 0.3;
@@ -2586,6 +2609,9 @@ void main(){
   document.querySelectorAll('input[name="sub-color"]').forEach((r) => {
     r.addEventListener("change", () => { settings.subColor = r.value; saveDraft(); });
   });
+  document.querySelectorAll('input[name="sub-anim"]').forEach((r) => {
+    r.addEventListener("change", () => { settings.subAnim = r.value; saveDraft(); });
+  });
   document.querySelectorAll('input[name="transition"]').forEach((r) => {
     r.addEventListener("change", () => { settings.transition = r.value; saveDraft(); });
   });
@@ -2607,6 +2633,8 @@ void main(){
   if (colorRadio) colorRadio.checked = true;
   const transRadio = document.querySelector(`input[name="transition"][value="${settings.transition}"]`);
   if (transRadio) transRadio.checked = true;
+  const animRadio = document.querySelector(`input[name="sub-anim"][value="${settings.subAnim}"]`);
+  if (animRadio) animRadio.checked = true;
   padRange.value = settings.scenePad;
   $("pad-value").textContent = `${settings.scenePad} 秒`;
 
