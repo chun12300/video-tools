@@ -61,11 +61,19 @@
   const SUB_COLORS = ["#ffffff", "#ffe14d", "#7ef0ff", "#ffb3d9"]; // 字幕顏色主題
   const TRANSITIONS = ["none", "fade", "flash"];                    // 硬切/黑場淡入/白閃
   const SUB_ANIMS  = ["slide", "type", "none"];                    // 字幕入場動畫
+  const FILTERS = {                                                // 圖片/影片濾鏡
+    none:      "",
+    cinematic: "contrast(1.12) saturate(0.82) sepia(0.12)",
+    warm:      "sepia(0.18) saturate(1.25) brightness(1.06)",
+    vintage:   "sepia(0.45) contrast(1.08) brightness(0.92) saturate(0.75)",
+    bw:        "grayscale(1) contrast(1.08)",
+  };
   const settings = {
     subSize: "medium",
     subPos: "bottom",
     subColor: "#ffffff",
-    subAnim: "slide",   // 字幕入場動畫:slide 上滑 / type 打字機 / none 無
+    subAnim: "slide",    // 字幕入場動畫:slide 上滑 / type 打字機 / none 無
+    imageFilter: "none", // 圖片濾鏡
     transition: "none",
     scenePad: 0.4, // 句間停頓(秒)
   };
@@ -187,6 +195,7 @@
         if (SUB_COLORS.includes(d.settings.subColor)) settings.subColor = d.settings.subColor;
         if (TRANSITIONS.includes(d.settings.transition)) settings.transition = d.settings.transition;
         if (SUB_ANIMS.includes(d.settings.subAnim)) settings.subAnim = d.settings.subAnim;
+        if (d.settings.imageFilter in FILTERS) settings.imageFilter = d.settings.imageFilter;
         settings.scenePad = numOr(d.settings.scenePad, 0, 1.5, 0.4);
       }
       if (Array.isArray(d.characters) && d.characters.length) {
@@ -2158,6 +2167,9 @@ void main(){
       const idx = Math.min(Math.floor(p * n), n - 1);
       const segP = clamp(p * n - idx, 0, 1);
       const item = scene.media[idx];
+      // 圖片/影片濾鏡:僅套在媒體圖層,字幕不受影響
+      const flt = FILTERS[settings.imageFilter];
+      if (flt) ctx.filter = flt;
       if (item.kind === "video") {
         // 播放中才驅動影片:切到這個素材時從頭播,長了會被切、短了 loop 補滿
         if (play && play.running && play.activeVideo !== item) {
@@ -2179,6 +2191,7 @@ void main(){
           ctx.drawImage(item.image, r.sx, r.sy, r.sw, r.sh, 0, 0, W, H);
         }
       }
+      if (flt) ctx.filter = "none"; // 重設,避免影響字幕
       drawSubtitle(scene.text, elapsed);
     } else {
       drawTextCard(scene);
@@ -2704,6 +2717,9 @@ void main(){
   document.querySelectorAll('input[name="sub-anim"]').forEach((r) => {
     r.addEventListener("change", () => { settings.subAnim = r.value; saveDraft(); });
   });
+  document.querySelectorAll('input[name="img-filter"]').forEach((r) => {
+    r.addEventListener("change", () => { settings.imageFilter = r.value; drawIdle(); saveDraft(); });
+  });
   document.querySelectorAll('input[name="transition"]').forEach((r) => {
     r.addEventListener("change", () => { settings.transition = r.value; saveDraft(); });
   });
@@ -2727,6 +2743,8 @@ void main(){
   if (transRadio) transRadio.checked = true;
   const animRadio = document.querySelector(`input[name="sub-anim"][value="${settings.subAnim}"]`);
   if (animRadio) animRadio.checked = true;
+  const filterRadio = document.querySelector(`input[name="img-filter"][value="${settings.imageFilter}"]`);
+  if (filterRadio) filterRadio.checked = true;
   padRange.value = settings.scenePad;
   $("pad-value").textContent = `${settings.scenePad} 秒`;
 
