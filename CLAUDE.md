@@ -169,6 +169,11 @@
   MediaRecorder 的 WebM duration=Infinity,publish.js 用 `ensureFiniteDuration`
   (seek 到 1e9 逼出實際長度)處理封面截圖與進度。
 
+- **爆款腳本範本**:步驟 1 的「AI 腳本提示詞」按結構分六種(`SCRIPT_TEMPLATES`:
+  list/howto/story/review/myth/plain),每種有一句 `desc`(只顯示、不進提示詞)與
+  `guide[]`(該結構的 hook 開頭與節奏,寫進提示詞);主題輸入 `#tpl-topic` 優先,
+  沒填就用貼上的文案當來源;剪貼簿失敗退回 textarea+execCommand。
+
 ### 發佈準備包(publish.js)的設計
 
 - 交接:合併(key `publish`,只有 blob)與字幕工具(blob+segs+offset)都經

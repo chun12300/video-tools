@@ -40,11 +40,28 @@
       <p id="split-result" class="ok-msg" hidden></p>
       <p id="step1-error" class="error-msg" hidden></p>
       <button type="button" id="analyze-btn" class="btn btn-primary">🔍 分析腳本</button>
-      <div class="wizard-actions">
-        <button type="button" id="ai-prompt-btn" class="btn"
-          title="複製一段提示詞,貼給 Claude 等 AI 生成分鏡腳本後貼回上面">🤖 複製 AI 腳本提示詞</button>
-        <p id="ai-copy-msg" class="ok-msg" hidden>✅ 已複製!貼到 Claude 等 AI 聊天工具,生成的腳本直接貼回上面的框框。</p>
-      </div>
+
+      <fieldset class="tpl-box">
+        <legend>不會寫?讓 AI 幫你(選一種爆款結構)</legend>
+        <div class="option-group" role="radiogroup" aria-label="腳本結構範本">
+          <label class="chip"><input type="radio" name="tpl" value="list" checked><span>📋 清單型</span></label>
+          <label class="chip"><input type="radio" name="tpl" value="howto"><span>🛠 教學型</span></label>
+          <label class="chip"><input type="radio" name="tpl" value="story"><span>📖 故事型</span></label>
+          <label class="chip"><input type="radio" name="tpl" value="review"><span>⭐ 開箱型</span></label>
+          <label class="chip"><input type="radio" name="tpl" value="myth"><span>❌ 破解迷思</span></label>
+          <label class="chip"><input type="radio" name="tpl" value="plain"><span>✏️ 一般</span></label>
+        </div>
+        <p id="tpl-desc" class="list-hint"></p>
+        <div class="field-row">
+          <label for="tpl-topic">主題</label>
+          <input type="text" id="tpl-topic" class="tpl-topic" placeholder="例如:租屋族省錢技巧、咖啡機開箱…">
+        </div>
+        <div class="wizard-actions">
+          <button type="button" id="ai-prompt-btn" class="btn"
+            title="複製一段提示詞,貼給 Claude 等 AI 生成分鏡腳本後貼回上面">🤖 複製 AI 腳本提示詞</button>
+          <p id="ai-copy-msg" class="ok-msg" hidden>✅ 已複製!貼到 Claude 等 AI 聊天工具,生成的腳本直接貼回上面的框框。</p>
+        </div>
+      </fieldset>
     </section>
 
     <!-- 步驟 2:設定每個場景 -->

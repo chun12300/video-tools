@@ -1003,6 +1003,27 @@ legend {
   margin: 0;
 }
 
+.tpl-box { margin-top: 16px; }
+
+.tpl-box .option-group { margin: 4px 0 10px; }
+
+.tpl-topic {
+  flex: 1;
+  min-width: 200px;
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 0.92rem;
+}
+
+.tpl-topic:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .script-input {
   width: 100%;
   background: var(--bg-inset);
