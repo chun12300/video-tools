@@ -1053,22 +1053,90 @@
     ta.select();
   });
 
-  // ===== AI 腳本提示詞(貼給 Claude 等 AI 生成分鏡腳本)=====
+  // ===== AI 腳本提示詞(選一種爆款結構,貼給 Claude 等 AI 生成分鏡腳本)=====
+  // 每種範本:一句話說明 + 專屬的結構指示(hook 開頭與節奏)
+  const SCRIPT_TEMPLATES = {
+    list: {
+      desc: "「N 個你不知道的…」條列式,節奏快、資訊密度高,最適合新手起步。",
+      guide: [
+        "結構:開場拋出「幾個」重點勾起好奇 → 逐點快速講(每點 1~2 句)→ 結尾行動呼籲",
+        "第一句用數字+好處當 hook,例如「租屋族必看的 5 個省錢技巧,第 3 個超多人不知道」",
+        "每一點開頭可標「第一」「第二」…,一點講完馬上進下一點,不拖泥帶水",
+      ],
+    },
+    howto: {
+      desc: "手把手教一件事,步驟清楚,觀眾學得到東西、會收藏。",
+      guide: [
+        "結構:開場點出痛點或成果 → 依步驟一步步教(每步 1~2 句)→ 結尾提醒重點+行動呼籲",
+        "第一句用「只要三步驟就能…」或「原來這樣做就對了」當 hook",
+        "步驟之間用「接著」「最後」銜接,講清楚可操作的動作",
+      ],
+    },
+    story: {
+      desc: "用第一人稱小故事帶出重點,有情緒起伏,最容易讓人看到最後。",
+      guide: [
+        "結構:開場丟出衝突或反差 → 經過(鋪陳轉折)→ 結果與體悟 → 行動呼籲",
+        "第一句用「我曾經…直到…」或一個意外的結果當 hook,製造懸念",
+        "中段保留一個「沒想到」的轉折,結尾給觀眾帶得走的啟發",
+      ],
+    },
+    review: {
+      desc: "開箱/評測某個產品或服務,講優缺點與適合誰,帶導購感。",
+      guide: [
+        "結構:開場講這東西是什麼+為何值得看 → 亮點(2~3 個)→ 缺點/注意事項 → 推薦給誰+行動呼籲",
+        "第一句用「這個 X 到底值不值得買?」或一個驚人數據當 hook",
+        "優點缺點都要講,結尾明確說「適合…的人」,增加可信度",
+      ],
+    },
+    myth: {
+      desc: "破解常見錯誤觀念,「原來一直做錯了」的反差最抓眼球。",
+      guide: [
+        "結構:開場點名一個大家都信的迷思 → 破解(講出真相與原因)→ 正確做法 → 行動呼籲",
+        "第一句用「別再…了!」或「你以為的…其實是錯的」當 hook",
+        "先打破舊觀念再給正確做法,結尾呼籲分享給還在做錯的人",
+      ],
+    },
+    plain: {
+      desc: "只做基本改寫:分句、加 hook 與行動呼籲,不套特定結構。",
+      guide: [
+        "結構:開場 hook → 主要內容 → 結尾行動呼籲",
+        "第一句要能在 3 秒內抓住人",
+      ],
+    },
+  };
+
+  function currentTemplate() {
+    const r = document.querySelector('input[name="tpl"]:checked');
+    return (r && SCRIPT_TEMPLATES[r.value]) ? r.value : "plain";
+  }
+
+  function updateTplDesc() {
+    $("tpl-desc").textContent = SCRIPT_TEMPLATES[currentTemplate()].desc;
+  }
+
   function buildAiPrompt() {
-    const content = scriptInput.value.trim();
+    const tpl = SCRIPT_TEMPLATES[currentTemplate()];
+    const topic = $("tpl-topic").value.trim();
+    const pasted = scriptInput.value.trim();
+    const source = topic || pasted || "(把你的主題或原始文案寫在這裡)";
     return `請幫我把下面的主題或文案,改寫成直式短影片(約 30~60 秒)的分鏡腳本。
 
-規則:
+${tpl.guide.map((g) => "- " + g).join("\n")}
+
+共同規則:
 - 每句一行;有角色的對話在行首標記「角色名:台詞」(冒號用全形),旁白句不用標
 - 每句不超過 20 個字,口語化、有節奏
-- 第一句必須是 3 秒內抓住人的開場 hook
-- 最後一句是行動呼籲(例如:追蹤、留言、分享)
 - 想強調的關鍵字用 *星號* 包住(每句最多一個)
 - 只輸出腳本文字,不要任何其他說明
 
 主題/文案:
-${content || "(把你的主題或原始文案貼在這裡)"}`;
+${source}`;
   }
+
+  document.querySelectorAll('input[name="tpl"]').forEach((r) => {
+    r.addEventListener("change", updateTplDesc);
+  });
+  updateTplDesc();
 
   $("ai-prompt-btn").addEventListener("click", async () => {
     const text = buildAiPrompt();
