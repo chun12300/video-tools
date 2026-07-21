@@ -1462,6 +1462,18 @@ legend {
   font-size: 0.85rem;
 }
 
+.fal-key-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: monospace;
+}
+
 .howto-box {
   margin-top: 20px;
   border: 1px solid rgba(255, 201, 92, 0.3);

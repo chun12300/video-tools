@@ -40,6 +40,8 @@
   const RMBG_MODEL  = "briaai/RMBG-1.4";                       // AI 去背(image-segmentation)
   const KOKORO_CDN  = "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm"; // Kokoro TTS
   const KOKORO_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
+  const FAL_API_BASE = "https://fal.run";
+  const FAL_MODEL    = "fal-ai/flux/schnell"; // 4-step fast text-to-image
   const KOKORO_VOICES = [  // 中文語音選項(zf=女聲 zm=男聲)
     { id: "zf_xiaoxiao", label: "小小(女聲,柔和)" },
     { id: "zf_xiaobei",  label: "小北(女聲,溫暖)" },
@@ -655,6 +657,9 @@
         const addBtn = btn("addimg", "＋ 加素材", `圖片或影片片段(mp4/webm ≤50MB),一個場景最多 ${MAX_MEDIA} 個`);
         addBtn.classList.add("media-add");
         mediaRow.appendChild(addBtn);
+        const aiImgBtn = btn("aiimg", "🎨 AI 生圖", "用 fal.ai FLUX 根據這句文案生成配圖(需要 API Key)");
+        aiImgBtn.classList.add("media-add");
+        mediaRow.appendChild(aiImgBtn);
       }
       adv.appendChild(mediaRow);
       const advHint = document.createElement("p");
@@ -859,6 +864,36 @@
       pendingImgSceneId = scenes[idx].id;
       $("scene-img-input").click();
       return; // 選完檔案才重繪
+    } else if (act === "aiimg") {
+      const scene = scenes[idx];
+      if (scene.media.length >= MAX_MEDIA) {
+        showError("step2-error", `一個場景最多 ${MAX_MEDIA} 個素材`);
+        return;
+      }
+      if (!getFalKey()) {
+        showError("step2-error", "請先在步驟 3 的「fal.ai 設定」輸入 API Key 並儲存");
+        return;
+      }
+      const aiBtn = li.querySelector('[data-act="aiimg"]');
+      if (aiBtn) { aiBtn.disabled = true; aiBtn.textContent = "⏳ 生成中…"; }
+      const spoken = plainText(scene.text).trim();
+      const prompt = `${spoken}, portrait vertical frame, cinematic, high quality, photorealistic, 9:16`;
+      generateFalImage(prompt, (msg) => {
+        if (aiBtn && aiBtn.isConnected) aiBtn.textContent = msg;
+      }).then(async (file) => {
+        if (scene.media.length >= MAX_MEDIA) return;
+        const item = await loadMediaItem(file);
+        scene.media.push(item);
+        scene.advOpen = true;
+        renderScenes();
+      }).catch((e) => {
+        showError("step2-error", `AI 生圖失敗:${e.message}`);
+        if (aiBtn && aiBtn.isConnected) {
+          aiBtn.disabled = false;
+          aiBtn.textContent = "🎨 AI 生圖";
+        }
+      });
+      return;
     }
     renderScenes();
   });
@@ -1893,6 +1928,42 @@ ${source}`;
     return done;
   }
 
+  // ===== fal.ai FLUX AI 生圖 =====
+
+  function getFalKey() {
+    return (localStorage.getItem("fal-api-key") || "").trim();
+  }
+
+  async function generateFalImage(prompt, onStatus) {
+    const key = getFalKey();
+    if (!key) throw new Error("請先在步驟 3「fal.ai 設定」輸入 API Key");
+    if (onStatus) onStatus("🎨 AI 生圖中…(約 3~10 秒)");
+    const res = await fetch(`${FAL_API_BASE}/${FAL_MODEL}`, {
+      method: "POST",
+      headers: { "Authorization": `Key ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        image_size: "portrait_16_9",  // 720×1280 直式 9:16
+        num_inference_steps: 4,
+        num_images: 1,
+        enable_safety_checker: false,
+      }),
+    });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const j = await res.json(); msg = j.detail || j.message || msg; } catch {}
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    const imageUrl = data.images?.[0]?.url;
+    if (!imageUrl) throw new Error("fal.ai 未回傳圖片 URL");
+    if (onStatus) onStatus("下載生成圖片…");
+    const imgRes = await fetch(imageUrl);
+    if (!imgRes.ok) throw new Error("圖片下載失敗");
+    const blob = await imgRes.blob();
+    return new File([blob], "fal-ai.jpg", { type: blob.type || "image/jpeg" });
+  }
+
   // 開始播放/生成前,把用到 3D 視差的場景深度都準備好;個別失敗就跳過(播放時退回緩慢放大)
   async function ensureParallaxReady(list, onStatus) {
     const items = [];
@@ -2399,6 +2470,21 @@ void main(){
     if (noMedia) msg += `;${noMedia} 個場景沒有素材(用文字卡呈現)`;
     msg += useTts ? `;${useTts} 句使用合成語音(需分享分頁音訊)` : ";全部使用錄音,生成免分享分頁";
     el.textContent = msg;
+  }
+
+  // ===== fal.ai API Key =====
+  const falKeyInput = $("fal-key-input");
+  if (falKeyInput) {
+    falKeyInput.value = getFalKey();
+    $("fal-key-save").addEventListener("click", () => {
+      const key = falKeyInput.value.trim();
+      if (key) { localStorage.setItem("fal-api-key", key); }
+      else { localStorage.removeItem("fal-api-key"); }
+      const st = $("fal-key-status");
+      st.hidden = false;
+      st.textContent = key ? "✅ API Key 已儲存,回步驟 2 按「🎨 AI 生圖」即可使用" : "已清除 API Key";
+      setTimeout(() => { if (st.isConnected) st.hidden = true; }, 4000);
+    });
   }
 
   // ===== 預覽 =====

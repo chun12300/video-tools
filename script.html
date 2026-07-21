@@ -163,6 +163,19 @@
       </fieldset>
 
       <fieldset>
+        <legend>🎨 fal.ai AI 生圖設定</legend>
+        <p class="list-hint">設定後,步驟 2 每個場景都有「🎨 AI 生圖」按鈕,一鍵用 FLUX 根據文案生成配圖。<br>
+          API Key 只存在瀏覽器本機(localStorage),不會上傳或傳送到任何地方。</p>
+        <div class="field-row">
+          <label for="fal-key-input">API Key</label>
+          <input type="password" id="fal-key-input" class="fal-key-input" placeholder="key-xxxxxxxx…" autocomplete="off">
+          <button type="button" id="fal-key-save" class="btn btn-small">儲存</button>
+        </div>
+        <p id="fal-key-status" class="list-hint" hidden></p>
+        <p class="list-hint">沒有 Key?去 <strong>fal.ai → 右上角 → Settings → API Keys</strong> 建立。</p>
+      </fieldset>
+
+      <fieldset>
         <legend>節奏與轉場</legend>
         <div class="field-row">
           <label for="pad-range">句間停頓</label>
