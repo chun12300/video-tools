@@ -1678,3 +1678,86 @@ legend {
   .item-info { min-width: 60%; }
   .item-actions { width: 100%; justify-content: flex-end; }
 }
+
+/* ========================================
+   腳本轉影片 — 極致版新增樣式
+   ======================================== */
+
+/* ---- 場景拖曳排序 ---- */
+.drag-handle {
+  cursor: grab;
+  color: var(--text-dim);
+  font-size: 1.2rem;
+  user-select: none;
+  flex-shrink: 0;
+  align-self: center;
+  padding: 0 4px;
+  opacity: 0.45;
+  transition: opacity 0.15s, color 0.15s;
+  letter-spacing: -1px;
+  line-height: 1;
+}
+.drag-handle:hover { opacity: 1; color: var(--accent); }
+.drag-handle:active { cursor: grabbing; }
+.scene-card.dragging { opacity: 0.3; border-style: dashed; }
+.scene-card.drag-over {
+  border-color: var(--accent);
+  background: rgba(91, 140, 255, 0.1);
+  box-shadow: 0 0 0 2px var(--accent) inset;
+}
+
+/* ---- 場景搜尋 ---- */
+.scene-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 6px;
+}
+.scene-search {
+  flex: 1;
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+.scene-search:focus { outline: none; border-color: var(--accent); }
+.scene-search-count {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* ---- 場景預估時長徽章 ---- */
+.scene-dur {
+  margin-left: 4px;
+  color: var(--text-dim);
+  font-size: 0.73rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* ---- 批次 AI 生圖狀態列 ---- */
+.batch-ai-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+
+/* ---- 輸出設定 fieldset ---- */
+.output-fieldset .option-group { margin: 8px 0 4px; }
+
+/* ---- 字幕 Y 位置滑桿 ---- */
+.pos-y-row { margin: 8px 0; }
+
+/* ---- 濾鏡 chip 寬一點 ---- */
+.filter-group .chip span { min-width: 48px; text-align: center; }

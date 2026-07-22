@@ -10,8 +10,8 @@
   const $ = (id) => document.getElementById(id);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  const W = 1080;
-  const H = 1920;
+  let W = 1080;
+  let H = 1920;
   const KEN_BURNS = 0.08;        // 場景內圖片緩慢放大幅度(1.0 → 1.08)
   const SUB_MAX_CHARS = 15;      // 字幕每行最多字數
   const IMG_MAX_DIM = 4000;      // 超過就先縮小,避免記憶體問題
@@ -72,24 +72,35 @@
   const SUB_COLORS = ["#ffffff", "#ffe14d", "#7ef0ff", "#ffb3d9"]; // 字幕顏色主題
   const TRANSITIONS = ["none", "fade", "flash"];                    // 硬切/黑場淡入/白閃
   const SUB_ANIMS  = ["slide", "type", "none"];                    // 字幕入場動畫
-  const SUB_STYLES = ["classic", "pill"];                          // 字幕底色樣式
+  const SUB_STYLES = ["classic", "pill", "outline", "pop"];       // 字幕底色樣式
   const FILTERS = {                                                // 圖片/影片濾鏡
-    none:      "",
-    cinematic: "contrast(1.12) saturate(0.82) sepia(0.12)",
-    warm:      "sepia(0.18) saturate(1.25) brightness(1.06)",
-    vintage:   "sepia(0.45) contrast(1.08) brightness(0.92) saturate(0.75)",
-    bw:        "grayscale(1) contrast(1.08)",
+    none:        "",
+    cinematic:   "contrast(1.12) saturate(0.82) sepia(0.12)",
+    warm:        "sepia(0.18) saturate(1.25) brightness(1.06)",
+    vintage:     "sepia(0.45) contrast(1.08) brightness(0.92) saturate(0.75)",
+    bw:          "grayscale(1) contrast(1.08)",
+    teal_orange: "saturate(1.3) hue-rotate(-15deg) contrast(1.1)",
+    dramatic:    "contrast(1.35) saturate(1.2) brightness(0.88)",
+    portrait:    "brightness(1.06) saturate(0.9) sepia(0.08) contrast(0.96)",
   };
+  const OUTPUT_RESOLUTIONS = { "1080p": [1080, 1920], "720p": [720, 1280], "540p": [540, 960] };
   const settings = {
     subSize: "medium",
     subPos: "bottom",
     subColor: "#ffffff",
-    subAnim: "slide",    // 字幕入場動畫:slide 上滑 / type 打字機 / none 無
-    subStyle: "classic", // 字幕底色:classic 大底框 / pill 膠囊
-    imageFilter: "none", // 圖片濾鏡
+    subAnim: "slide",       // 字幕入場動畫:slide 上滑 / type 打字機 / none 無
+    subStyle: "classic",    // 字幕底色:classic 大底框 / pill 膠囊 / outline 純描邊 / pop 黑底白字
+    subBgOpacity: 0.55,     // 字幕底色透明度
+    hlColor: "#ffe14d",     // 強調色(*星號*文字)
+    subPosY: 82,            // 字幕中心 Y 位置(畫布高度 %)
+    imageFilter: "none",    // 圖片濾鏡
     transition: "none",
-    scenePad: 0.4, // 句間停頓(秒)
+    scenePad: 0.4,          // 句間停頓(秒)
+    outputFps: 30,          // 輸出幀率
+    outputRes: "1080p",     // 輸出解析度
   };
+  let dragSrcIdx = -1;              // 拖曳排序:被拖曳的場景 index
+  let batchAiCancelled = false;     // 批次 AI 生圖取消旗標
 
   const stage = $("stage");
   const ctx = stage.getContext("2d");
@@ -211,6 +222,12 @@
         if (SUB_STYLES.includes(d.settings.subStyle)) settings.subStyle = d.settings.subStyle;
         if (d.settings.imageFilter in FILTERS) settings.imageFilter = d.settings.imageFilter;
         settings.scenePad = numOr(d.settings.scenePad, 0, 1.5, 0.4);
+        settings.subBgOpacity = numOr(d.settings.subBgOpacity, 0.1, 1, 0.55);
+        if (typeof d.settings.hlColor === "string" && /^#[0-9a-f]{6}$/i.test(d.settings.hlColor))
+          settings.hlColor = d.settings.hlColor;
+        settings.subPosY = numOr(d.settings.subPosY, 10, 95, 82);
+        settings.outputFps = [24, 30, 60].includes(Number(d.settings.outputFps)) ? Number(d.settings.outputFps) : 30;
+        if (d.settings.outputRes in OUTPUT_RESOLUTIONS) settings.outputRes = d.settings.outputRes;
       }
       if (Array.isArray(d.characters) && d.characters.length) {
         characters = d.characters.slice(0, MAX_CHARS).map((c) => ({
@@ -518,14 +535,54 @@
   // ===== 步驟 2:場景列表 =====
   function renderScenes() {
     ensureNarrator();
+    const query = ($("scene-search") ? $("scene-search").value.trim().toLowerCase() : "");
     sceneListEl.textContent = "";
+    let visibleCount = 0;
     scenes.forEach((scene, i) => {
+      if (query && !scene.text.toLowerCase().includes(query)) return;
+      visibleCount++;
       if (!characters.some((c) => c.id === scene.charId)) scene.charId = characters[0].id;
       const char = charById(scene.charId);
       const li = document.createElement("li");
       li.className = "scene-card";
       li.dataset.id = scene.id;
+      li.dataset.idx = i;
       li.style.borderLeft = `4px solid ${char.color}`; // 角色代表色色條
+
+      // 拖曳手把
+      const dragHandle = document.createElement("div");
+      dragHandle.className = "drag-handle";
+      dragHandle.textContent = "⠿";
+      dragHandle.draggable = true;
+      dragHandle.title = "拖曳調整場景順序";
+      dragHandle.addEventListener("dragstart", (e) => {
+        dragSrcIdx = i;
+        li.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", String(i));
+      });
+      dragHandle.addEventListener("dragend", () => {
+        li.classList.remove("dragging");
+        document.querySelectorAll(".scene-card.drag-over").forEach((el) => el.classList.remove("drag-over"));
+        dragSrcIdx = -1;
+      });
+      li.addEventListener("dragover", (e) => {
+        if (dragSrcIdx < 0) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        li.classList.add("drag-over");
+      });
+      li.addEventListener("dragleave", () => li.classList.remove("drag-over"));
+      li.addEventListener("drop", (e) => {
+        e.preventDefault();
+        li.classList.remove("drag-over");
+        const destIdx = Number(li.dataset.idx);
+        if (dragSrcIdx < 0 || dragSrcIdx === destIdx) return;
+        const [moved] = scenes.splice(dragSrcIdx, 1);
+        scenes.splice(destIdx, 0, moved);
+        dragSrcIdx = -1;
+        renderScenes();
+      });
 
       // 主縮圖:第一個素材(或漸層文字卡),點擊展開/收合素材設定
       const thumb = document.createElement("div");
@@ -559,8 +616,14 @@
 
       const head = document.createElement("div");
       head.className = "scene-head";
+      const estSec = scene.durOverride
+        ? scene.durOverride
+        : scene.voice
+          ? scene.voice.duration
+          : estimateDur(plainText(scene.text), charById(scene.charId).rate);
       head.innerHTML = `<span class="item-index">${i + 1}</span>` +
-        `<span class="scene-kind">${scene.media.length ? `🖼 圖片×${scene.media.length}` : "🎨 漸層文字卡"}</span>`;
+        `<span class="scene-kind">${scene.media.length ? `🖼 圖片×${scene.media.length}` : "🎨 漸層文字卡"}</span>` +
+        `<span class="scene-dur">⏱ ${estSec.toFixed(1)}s</span>`;
 
       // 這句由哪個角色唸
       const charSel = document.createElement("select");
@@ -607,6 +670,7 @@
       actions.appendChild(btn("down", "↓", "下移", i === scenes.length - 1));
       actions.appendChild(btn("dup", "⿻ 複製", "複製這個場景(含文字、運鏡、素材)"));
       actions.appendChild(btn("merge", "⤵ 併入下一句", "把下一個場景的文字併進這個場景", i === scenes.length - 1));
+      actions.appendChild(btn("preview1", "▶ 預覽此句", "跳到步驟 4 預覽這個場景"));
       actions.appendChild(btn("del", "✕ 刪除"));
 
       // 素材與運鏡(摺疊收納,保持列表清爽)
@@ -818,10 +882,21 @@
       body.appendChild(ta);
       body.appendChild(adv);
       body.appendChild(actions);
+      li.appendChild(dragHandle);
       li.appendChild(thumb);
       li.appendChild(body);
       sceneListEl.appendChild(li);
     });
+    // 搜尋計數顯示
+    const countEl = $("scene-search-count");
+    if (countEl) {
+      if (query) {
+        countEl.textContent = `${visibleCount} / ${scenes.length} 個場景`;
+        countEl.hidden = false;
+      } else {
+        countEl.hidden = true;
+      }
+    }
     scheduleProjectSave(); // 任何結構變動後自動存檔
   }
 
@@ -895,6 +970,10 @@
     if (act === "sfxdel") {
       scenes[idx].sfx = null;
       renderScenes();
+      return;
+    }
+    if (act === "preview1") {
+      previewSingleScene(scenes[idx]);
       return;
     }
     if (act === "vrec") {
@@ -2309,9 +2388,9 @@ void main(){
     return lines;
   }
 
-  // 強調色:主色已是亮黃時改用橘紅,其他主題用亮黃
+  // 強調色:使用 settings.hlColor,若與主色相同則備用橘紅
   function highlightColor() {
-    return settings.subColor === "#ffe14d" ? "#ff8a5c" : "#ffe14d";
+    return settings.hlColor === settings.subColor ? "#ff8a5c" : settings.hlColor;
   }
 
   // 主題色字+黑描邊(+可選半透明黑底);lines 是 wrapStyled 的結果
@@ -2321,29 +2400,40 @@ void main(){
     ctx.textBaseline = "middle";
     const lineH = Math.round(px * 1.42);
     const blockH = lineH * lines.length;
-    const pill = settings.subStyle === "pill";
+    const style = settings.subStyle;
+    const opacity = settings.subBgOpacity;
     if (withBg) {
-      if (pill) {
-        // 每行獨立膠囊底色(白底黑字風格)
+      if (style === "pill") {
         lines.forEach((line, i) => {
           const lw = ctx.measureText(lineStr(line)).width;
           const y = centerY - blockH / 2 + lineH * (i + 0.5);
           const rh = lineH * 0.82;
           roundRect(ctx, W / 2 - lw / 2 - 22, y - rh / 2, lw + 44, rh, rh / 2);
-          ctx.fillStyle = "rgba(255,255,255,0.93)";
+          ctx.fillStyle = `rgba(255,255,255,${opacity})`;
           ctx.fill();
         });
-      } else {
+      } else if (style === "pop") {
+        lines.forEach((line, i) => {
+          const lw = ctx.measureText(lineStr(line)).width;
+          const y = centerY - blockH / 2 + lineH * (i + 0.5);
+          const rh = lineH * 0.88;
+          roundRect(ctx, W / 2 - lw / 2 - 20, y - rh / 2, lw + 40, rh, 12);
+          ctx.fillStyle = `rgba(0,0,0,${opacity})`;
+          ctx.fill();
+        });
+      } else if (style === "classic") {
         const widest = Math.max(...lines.map((l) => ctx.measureText(lineStr(l)).width));
         roundRect(ctx, W / 2 - widest / 2 - 30, centerY - blockH / 2 - 22,
           widest + 60, blockH + 44, 18);
-        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillStyle = `rgba(0,0,0,${opacity})`;
         ctx.fill();
       }
+      // outline: 無底色,純描邊
     }
     ctx.lineJoin = "round";
     const strokeW = Math.max(4, Math.round(px * 0.13));
-    ctx.lineWidth = pill ? 0 : strokeW; // 膠囊樣式不需描邊
+    const noStroke = style === "pill";
+    ctx.lineWidth = noStroke ? 0 : strokeW;
     ctx.strokeStyle = "rgba(0,0,0,0.9)";
     ctx.textAlign = "left";
     lines.forEach((line, i) => {
@@ -2353,11 +2443,15 @@ void main(){
       let runHl = line.length ? line[0].hl : false;
       const flush = () => {
         if (!run) return;
-        if (!pill) ctx.strokeText(run, x, y);
-        // 膠囊樣式:白底所以用深色字;強調字用主題色
-        const fillClr = pill
-          ? (runHl ? highlightColor() : "#111111")
-          : (runHl ? highlightColor() : settings.subColor);
+        if (!noStroke) ctx.strokeText(run, x, y);
+        let fillClr;
+        if (style === "pill") {
+          fillClr = runHl ? highlightColor() : "#111111";
+        } else if (style === "pop") {
+          fillClr = runHl ? highlightColor() : "#ffffff";
+        } else {
+          fillClr = runHl ? highlightColor() : settings.subColor;
+        }
         ctx.fillStyle = fillClr;
         ctx.fillText(run, x, y);
         x += ctx.measureText(run).width;
@@ -2387,7 +2481,7 @@ void main(){
     const lines = wrapStyled(chars, W * 0.88, SUB_MAX_CHARS);
     const lineH = Math.round(px * 1.42);
     const blockH = lineH * lines.length;
-    const centerY = settings.subPos === "middle" ? H / 2 : H * 0.87 - blockH / 2;
+    const centerY = settings.subPos === "middle" ? H / 2 : H * (settings.subPosY / 100);
 
     // 上滑淡入:0.22s ease-out cubic
     if (settings.subAnim === "slide") {
@@ -2825,7 +2919,7 @@ void main(){
     }
     const { audioTrack, displayStream, silent } = audio;
 
-    const canvasStream = stage.captureStream(30);
+    const canvasStream = stage.captureStream(settings.outputFps);
     const tracks = [...canvasStream.getVideoTracks()];
     // 有音效/BGM 時:分頁音訊(TTS)與 WebAudio 三層混進同一條音軌
     // (MediaRecorder 只錄第一條音軌,不能直接放兩條)
@@ -2922,7 +3016,15 @@ void main(){
     showError("mp4-error", "");
     const videoUrl = URL.createObjectURL(blob);
     lastUrls.push(videoUrl);
-    $("result-video").src = videoUrl;
+    const rv = $("result-video");
+    rv.src = videoUrl;
+    // MediaRecorder 輸出的 WebM duration=Infinity,seek 到末尾讓瀏覽器補算實際時長
+    rv.addEventListener("loadedmetadata", () => {
+      if (rv.duration === Infinity || isNaN(rv.duration)) {
+        rv.currentTime = 1e9;
+        rv.addEventListener("timeupdate", () => { rv.currentTime = 0; }, { once: true });
+      }
+    }, { once: true });
     $("download-video").href = videoUrl;
     $("result-size").textContent = fmtSize(blob.size);
     $("silent-note").hidden = !silent;
@@ -3039,6 +3141,84 @@ void main(){
     }
   });
 
+  // ===== 新功能:單場景預覽 =====
+  function previewSingleScene(scene) {
+    if (!scene) return;
+    gotoStep(4);
+    // 短暫延遲等 step 4 渲染好
+    setTimeout(async () => {
+      if (ttsOk()) speechSynthesis.cancel();
+      beginPlay("preview", !ttsOk());
+      const audio = setupAudio(null);
+      play.audio = audio;
+      play.t0 = performance.now();
+      setStatus(`預覽場景:${scene.text.slice(0, 20)}…`);
+      await ensureParallaxReady([scene], setStatus);
+      await runShow([scene], () => {});
+      if (!play || !play.running) stopAudioNow(audio);
+      else await finishAudio(audio);
+      setStatus("場景預覽結束。");
+      endPlay();
+    }, 200);
+  }
+
+  // ===== 新功能:套用輸出解析度 =====
+  function applyOutputResolution() {
+    const [w, h] = OUTPUT_RESOLUTIONS[settings.outputRes] || OUTPUT_RESOLUTIONS["1080p"];
+    W = w;
+    H = h;
+    stage.width = w;
+    stage.height = h;
+    // CSS 縮放比保持 canvas-wrap 的顯示尺寸不變
+    const scale = Math.min(1, 360 / w);
+    stage.style.width = `${Math.round(w * scale)}px`;
+    stage.style.height = `${Math.round(h * scale)}px`;
+    drawIdle();
+    saveDraft();
+  }
+
+  // ===== 新功能:批次 AI 生圖 =====
+  async function batchGenerateImages() {
+    if (!getFalKey()) {
+      showError("step2-error", "請先在步驟 3 的「fal.ai 設定」輸入 API Key 並儲存");
+      return;
+    }
+    const targets = scenes.filter((s) => s.media.length === 0);
+    if (!targets.length) {
+      showError("step2-error", "所有場景都已有素材,不需批次生圖。");
+      return;
+    }
+    batchAiCancelled = false;
+    $("batch-ai-btn").disabled = true;
+    $("batch-ai-cancel").hidden = false;
+    $("batch-ai-status").hidden = false;
+    const bar = $("batch-ai-bar");
+    const text = $("batch-ai-text");
+    let done = 0;
+    for (const scene of targets) {
+      if (batchAiCancelled) break;
+      const spoken = plainText(scene.text).trim();
+      const prompt = `${spoken}, portrait vertical frame, cinematic, high quality, photorealistic, 9:16`;
+      text.textContent = `${done + 1} / ${targets.length}:${scene.text.slice(0, 20)}… ⏳`;
+      bar.style.width = `${Math.round((done / targets.length) * 100)}%`;
+      try {
+        const file = await generateFalImage(prompt, () => {});
+        if (scene.media.length < MAX_MEDIA) {
+          const item = await loadMediaItem(file);
+          scene.media.push(item);
+        }
+      } catch (e) {
+        text.textContent = `生圖失敗:${e.message}`;
+      }
+      done++;
+    }
+    bar.style.width = "100%";
+    text.textContent = batchAiCancelled ? "已取消" : `完成!共生成 ${done} 張圖`;
+    $("batch-ai-btn").disabled = false;
+    $("batch-ai-cancel").hidden = true;
+    renderScenes();
+  }
+
   // ===== 事件與初始化 =====
   document.querySelectorAll(".wizard-step").forEach((btn) => {
     btn.addEventListener("click", () => gotoStep(Number(btn.dataset.step)));
@@ -3078,6 +3258,53 @@ void main(){
     saveDraft();
   });
 
+  // 新控件:字幕透明度
+  const subOpacity = $("sub-opacity");
+  if (subOpacity) {
+    subOpacity.addEventListener("input", () => {
+      settings.subBgOpacity = Number(subOpacity.value) / 100;
+      $("sub-opacity-val").textContent = `${subOpacity.value}%`;
+      drawIdle();
+      saveDraft();
+    });
+  }
+  // 強調色
+  document.querySelectorAll('input[name="hl-color"]').forEach((r) => {
+    r.addEventListener("change", () => { settings.hlColor = r.value; drawIdle(); saveDraft(); });
+  });
+  // 字幕垂直位置
+  const subPosY = $("sub-pos-y");
+  if (subPosY) {
+    subPosY.addEventListener("input", () => {
+      settings.subPosY = Number(subPosY.value);
+      $("sub-pos-y-val").textContent = `${subPosY.value}%`;
+      drawIdle();
+      saveDraft();
+    });
+  }
+  // 輸出解析度
+  document.querySelectorAll('input[name="output-res"]').forEach((r) => {
+    r.addEventListener("change", () => { settings.outputRes = r.value; applyOutputResolution(); });
+  });
+  // 輸出幀率
+  document.querySelectorAll('input[name="output-fps"]').forEach((r) => {
+    r.addEventListener("change", () => { settings.outputFps = Number(r.value); saveDraft(); });
+  });
+  // 場景搜尋
+  const sceneSearch = $("scene-search");
+  if (sceneSearch) {
+    sceneSearch.addEventListener("input", () => renderScenes());
+  }
+  // 批次 AI 生圖
+  const batchAiBtn = $("batch-ai-btn");
+  if (batchAiBtn) {
+    batchAiBtn.addEventListener("click", () => batchGenerateImages());
+  }
+  const batchAiCancel = $("batch-ai-cancel");
+  if (batchAiCancel) {
+    batchAiCancel.addEventListener("click", () => { batchAiCancelled = true; });
+  }
+
   restoreDraft();
   ensureNarrator(); // 首次使用自動建立預設角色「旁白」
   // 把還原的設定套回表單
@@ -3097,6 +3324,16 @@ void main(){
   if (filterRadio) filterRadio.checked = true;
   padRange.value = settings.scenePad;
   $("pad-value").textContent = `${settings.scenePad} 秒`;
+  // 新設定還原到 UI
+  const hlColorRadio = document.querySelector(`input[name="hl-color"][value="${settings.hlColor}"]`);
+  if (hlColorRadio) hlColorRadio.checked = true;
+  if (subOpacity) { subOpacity.value = Math.round(settings.subBgOpacity * 100); $("sub-opacity-val").textContent = `${subOpacity.value}%`; }
+  if (subPosY) { subPosY.value = settings.subPosY; $("sub-pos-y-val").textContent = `${settings.subPosY}%`; }
+  const resRadio = document.querySelector(`input[name="output-res"][value="${settings.outputRes}"]`);
+  if (resRadio) resRadio.checked = true;
+  const fpsRadio = document.querySelector(`input[name="output-fps"][value="${settings.outputFps}"]`);
+  if (fpsRadio) fpsRadio.checked = true;
+  applyOutputResolution();
 
   checkSupport();
   if (ttsOk()) {

@@ -73,7 +73,11 @@
       <h2 class="section-title">步驟 2:設定每個場景</h2>
       <p class="list-hint">每句是一個場景:文字可直接編輯(同時是字幕內容)、指定配音角色;
         點縮圖展開「素材與運鏡」可放 1~3 張圖片(多張會依語音時間平均分配、依序硬切出分鏡感,
-        每張都能個別裁剪)並選擇運鏡效果;沒有圖片的場景用漸層背景+大字文字卡呈現。用 ↑↓ 調整順序。</p>
+        每張都能個別裁剪)並選擇運鏡效果;沒有圖片的場景用漸層背景+大字文字卡呈現。拖曳 ⠿ 手把可調整順序。</p>
+      <div class="scene-search-row">
+        <input type="text" id="scene-search" class="scene-search" placeholder="🔍 搜尋場景文字…">
+        <span id="scene-search-count" class="scene-search-count" hidden></span>
+      </div>
       <ol id="scene-list" class="scene-list"></ol>
       <button type="button" id="add-scene-btn" class="btn">＋ 新增場景</button>
       <button type="button" id="add-hook-btn" class="btn"
@@ -82,6 +86,13 @@
         title="加到最後面:請觀眾追蹤/留言的結尾">📣 加片尾 CTA</button>
       <button type="button" id="batch-img-btn" class="btn"
         title="一次選多張圖,依場景順序自動分配">📦 批次配圖</button>
+      <button type="button" id="batch-ai-btn" class="btn"
+        title="對所有沒有素材的場景依序用 AI 生圖(需要 fal.ai API Key)">🎨 批次 AI 生圖</button>
+      <button type="button" id="batch-ai-cancel" class="btn" hidden>⏹ 取消批次生圖</button>
+      <div class="batch-ai-row" id="batch-ai-status" hidden>
+        <span id="batch-ai-text"></span>
+        <div class="progress-track" style="flex:1;max-width:200px"><div id="batch-ai-bar" class="progress-bar"></div></div>
+      </div>
       <p id="batch-ok-msg" class="ok-msg" hidden></p>
       <p id="step2-error" class="error-msg" hidden></p>
       <input type="file" id="scene-img-input" accept="image/*,video/mp4,video/webm" hidden>
@@ -150,6 +161,26 @@
           <span class="option-label">底色</span>
           <label class="chip"><input type="radio" name="sub-style" value="classic" checked><span>▬ 大底框</span></label>
           <label class="chip"><input type="radio" name="sub-style" value="pill"><span>💊 膠囊(剪映風)</span></label>
+          <label class="chip"><input type="radio" name="sub-style" value="outline"><span>✏ 描邊無底</span></label>
+          <label class="chip"><input type="radio" name="sub-style" value="pop"><span>⬛ 黑底白字</span></label>
+        </div>
+        <div class="field-row" style="margin-top:6px;">
+          <label for="sub-opacity">透明度</label>
+          <input type="range" id="sub-opacity" min="10" max="100" step="5" value="55">
+          <span id="sub-opacity-val" class="range-val">55%</span>
+        </div>
+        <div class="option-group" style="margin-top:6px;" role="radiogroup" aria-label="強調色">
+          <span class="option-label">強調色</span>
+          <label class="chip"><input type="radio" name="hl-color" value="#ffe14d" checked><span>🟡 亮黃</span></label>
+          <label class="chip"><input type="radio" name="hl-color" value="#ff8a5c"><span>🟠 橘紅</span></label>
+          <label class="chip"><input type="radio" name="hl-color" value="#7ef0ff"><span>🔵 青藍</span></label>
+          <label class="chip"><input type="radio" name="hl-color" value="#5ad19a"><span>🟢 翠綠</span></label>
+          <label class="chip"><input type="radio" name="hl-color" value="#ff7ac6"><span>🩷 粉紅</span></label>
+        </div>
+        <div class="field-row pos-y-row" style="margin-top:6px;">
+          <label for="sub-pos-y">垂直位置</label>
+          <input type="range" id="sub-pos-y" min="10" max="95" step="1" value="82">
+          <span id="sub-pos-y-val" class="range-val">82%</span>
         </div>
         <div class="option-group" role="radiogroup" aria-label="字幕入場動畫">
           <span class="option-label">入場</span>
@@ -171,6 +202,9 @@
           <label class="chip"><input type="radio" name="img-filter" value="warm"><span>🟠 暖色調</span></label>
           <label class="chip"><input type="radio" name="img-filter" value="vintage"><span>📷 復古</span></label>
           <label class="chip"><input type="radio" name="img-filter" value="bw"><span>⬛ 黑白</span></label>
+          <label class="chip"><input type="radio" name="img-filter" value="teal_orange"><span>🎞 青橙(電影)</span></label>
+          <label class="chip"><input type="radio" name="img-filter" value="dramatic"><span>⚡ 戲劇強調</span></label>
+          <label class="chip"><input type="radio" name="img-filter" value="portrait"><span>🌸 人像柔光</span></label>
         </div>
         <p class="list-hint">套用在所有場景的圖片與影片素材;字幕、背景文字卡不受影響。切換時右側預覽即時更新。</p>
       </fieldset>
@@ -186,6 +220,23 @@
         </div>
         <p id="fal-key-status" class="list-hint" hidden></p>
         <p class="list-hint">沒有 Key?去 <strong>fal.ai → 右上角 → Settings → API Keys</strong> 建立。</p>
+      </fieldset>
+
+      <fieldset class="output-fieldset">
+        <legend>輸出品質</legend>
+        <div class="option-group" role="radiogroup" aria-label="輸出解析度">
+          <span class="option-label">解析度</span>
+          <label class="chip"><input type="radio" name="output-res" value="1080p" checked><span>1080p(推薦)</span></label>
+          <label class="chip"><input type="radio" name="output-res" value="720p"><span>720p(較快)</span></label>
+          <label class="chip"><input type="radio" name="output-res" value="540p"><span>540p(最快)</span></label>
+        </div>
+        <div class="option-group" role="radiogroup" aria-label="輸出幀率" style="margin-top:6px;">
+          <span class="option-label">幀率</span>
+          <label class="chip"><input type="radio" name="output-fps" value="24"><span>24fps(電影感)</span></label>
+          <label class="chip"><input type="radio" name="output-fps" value="30" checked><span>30fps(標準)</span></label>
+          <label class="chip"><input type="radio" name="output-fps" value="60"><span>60fps(流暢)</span></label>
+        </div>
+        <p class="list-hint">解析度/幀率變更後,畫布會自動調整;60fps 需要更強的電腦才能流暢錄製。</p>
       </fieldset>
 
       <fieldset>
