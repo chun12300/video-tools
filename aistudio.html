@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 懶人包製片 — 影片小工具箱</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+  <style>
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      margin: 0 0 16px;
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 0.9rem;
+      color: var(--text-dim);
+    }
+    input[type=text], input[type=password], textarea, select {
+      width: 100%;
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 10px 12px;
+      font-size: 0.95rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color .2s;
+    }
+    input[type=text]:focus, input[type=password]:focus,
+    textarea:focus, select:focus { border-color: var(--accent); }
+    .key-row { display: flex; gap: 8px; }
+    .key-row input { flex: 1; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+    textarea#script-output { min-height: 220px; resize: vertical; line-height: 1.9; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      font-family: inherit;
+      transition: background .15s, opacity .15s, filter .15s;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: var(--accent-text); }
+    .btn-primary:not(:disabled):hover { background: var(--accent-hover); }
+    .btn-ghost { background: var(--bg-inset); color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-go { background: var(--ok); color: #0b1a12; }
+    .btn-go:hover { filter: brightness(1.1); }
+    .btn-full { width: 100%; justify-content: center; }
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+    .status {
+      display: none;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      margin-top: 12px;
+    }
+    .status.show { display: block; }
+    .status.loading { background: rgba(91,140,255,.1); color: var(--accent); border: 1px solid rgba(91,140,255,.3); }
+    .status.error { background: rgba(255,122,122,.1); color: var(--error); border: 1px solid rgba(255,122,122,.3); }
+    .status.ok { background: rgba(90,209,154,.1); color: var(--ok); border: 1px solid rgba(90,209,154,.3); }
+    #result-card { display: none; }
+    #result-card.show { display: block; }
+    .meta-row { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+    .char-count { font-size: 0.8rem; color: var(--text-dim); }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <p class="back-link"><a href="index.html">← 回工具選單</a></p>
+    <h1>🤖 AI 懶人包製片</h1>
+    <p class="tagline">輸入主題，Gemini AI 自動生成腳本，一鍵送進影片製作 — <strong>不用自己拍片</strong>。</p>
+    <p class="desktop-hint">💻 建議使用電腦操作</p>
+  </header>
+
+  <main>
+
+    <!-- ① API 金鑰 -->
+    <div class="card">
+      <h2 class="card-title">① Gemini API 金鑰</h2>
+      <label>貼上你的 Gemini API Key（只存在你的瀏覽器，不會上傳到任何地方）</label>
+      <div class="key-row">
+        <input type="password" id="api-key" placeholder="AIzaSy..." autocomplete="off" spellcheck="false">
+        <button class="btn btn-ghost" id="toggle-key">顯示</button>
+        <button class="btn btn-ghost" id="save-key">儲存</button>
+      </div>
+      <div id="key-status" class="status"></div>
+    </div>
+
+    <!-- ② 主題與風格 -->
+    <div class="card">
+      <h2 class="card-title">② 主題與風格</h2>
+      <label>影片主題（寫越具體，腳本越好）</label>
+      <textarea id="topic" rows="3"
+        placeholder="例：人生就像股票，不可能天天漲，但長期持有才能看到複利&#10;例：3個讓你早上不想起床的壞習慣"></textarea>
+
+      <div class="grid2" style="margin-top:14px;">
+        <div>
+          <label>影片風格</label>
+          <select id="style">
+            <option value="勵志故事" selected>💪 勵志故事</option>
+            <option value="知識分享">📚 知識分享</option>
+            <option value="生活觀察">☕ 生活觀察</option>
+            <option value="幽默趣味">😄 幽默趣味</option>
+            <option value="職場建議">💼 職場建議</option>
+          </select>
+        </div>
+        <div>
+          <label>腳本句數</label>
+          <select id="count">
+            <option value="5">5 句（約 30 秒）</option>
+            <option value="7" selected>7 句（約 45 秒）</option>
+            <option value="10">10 句（約 60 秒）</option>
+          </select>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-full" id="generate-btn">✨ 生成腳本</button>
+      <div id="gen-status" class="status"></div>
+    </div>
+
+    <!-- ③ 生成結果 -->
+    <div class="card" id="result-card">
+      <h2 class="card-title">③ 生成結果（可直接修改）</h2>
+      <textarea id="script-output"></textarea>
+      <div class="meta-row">
+        <span class="char-count" id="char-count"></span>
+        <button class="btn btn-ghost" id="regen-btn" style="padding:6px 14px; font-size:0.85rem;">🔄 重新生成</button>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-go" id="go-btn">🎬 帶到腳本轉影片 →</button>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+  (function () {
+    const KEY_STORE = 'gemini-api-key';
+    const HANDOFF_STORE = 'aistudio-handoff';
+
+    const apiKeyEl   = document.getElementById('api-key');
+    const toggleBtn  = document.getElementById('toggle-key');
+    const saveBtn    = document.getElementById('save-key');
+    const keyStatus  = document.getElementById('key-status');
+    const topicEl    = document.getElementById('topic');
+    const styleEl    = document.getElementById('style');
+    const countEl    = document.getElementById('count');
+    const genBtn     = document.getElementById('generate-btn');
+    const genStatus  = document.getElementById('gen-status');
+    const resultCard = document.getElementById('result-card');
+    const outputEl   = document.getElementById('script-output');
+    const charCount  = document.getElementById('char-count');
+    const regenBtn   = document.getElementById('regen-btn');
+    const goBtn      = document.getElementById('go-btn');
+
+    // 載入已儲存的 key
+    const savedKey = localStorage.getItem(KEY_STORE);
+    if (savedKey) {
+      apiKeyEl.value = savedKey;
+      setStatus(keyStatus, 'ok', '✓ 已載入儲存的 API Key');
+    }
+
+    // 顯示 / 隱藏 key
+    toggleBtn.addEventListener('click', () => {
+      const show = apiKeyEl.type === 'password';
+      apiKeyEl.type = show ? 'text' : 'password';
+      toggleBtn.textContent = show ? '隱藏' : '顯示';
+    });
+
+    // 儲存 key
+    saveBtn.addEventListener('click', () => {
+      const k = apiKeyEl.value.trim();
+      if (!k) { setStatus(keyStatus, 'error', '請先輸入 API Key'); return; }
+      localStorage.setItem(KEY_STORE, k);
+      setStatus(keyStatus, 'ok', '✓ API Key 已儲存到瀏覽器');
+    });
+
+    // 生成腳本
+    genBtn.addEventListener('click', generate);
+    regenBtn.addEventListener('click', generate);
+
+    async function generate() {
+      const key = apiKeyEl.value.trim() || localStorage.getItem(KEY_STORE) || '';
+      if (!key) { setStatus(genStatus, 'error', '請先輸入並儲存 Gemini API Key ↑'); return; }
+
+      const topic = topicEl.value.trim();
+      if (!topic) { setStatus(genStatus, 'error', '請輸入影片主題'); topicEl.focus(); return; }
+
+      const style = styleEl.value;
+      const count = countEl.value;
+
+      genBtn.disabled = true;
+      regenBtn.disabled = true;
+      setStatus(genStatus, 'loading', '⏳ AI 正在生成腳本，請稍候…');
+
+      const prompt = `你是一位擅長製作短影片腳本的台灣創作者，使用繁體中文。
+請根據以下主題，生成一段適合直式短影片（60 秒內）的旁白腳本。
+
+要求：
+- 共 ${count} 句，每句獨立一行
+- 每句 20–40 個中文字
+- 口語化、有節奏感、適合朗讀
+- 第一句必須是強力 Hook（讓人想繼續看下去）
+- 最後一句要有有力的結尾或呼籲
+- 風格：${style}
+- 只輸出腳本句子，每句一行，不要編號、不要標題、不要任何說明文字
+
+主題：${topic}`;
+
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+          }
+        );
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err?.error?.message || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (!raw) throw new Error('AI 沒有回傳內容，請再試一次');
+
+        // 清理：去掉編號、粗體符號、多餘空行
+        const cleaned = raw
+          .trim()
+          .split('\n')
+          .map(l => l.replace(/^\d+[\.\、\)]\s*/, '').replace(/\*\*/g, '').trim())
+          .filter(l => l.length > 0)
+          .join('\n');
+
+        outputEl.value = cleaned;
+        updateCount();
+        resultCard.classList.add('show');
+        setStatus(genStatus, 'ok', '✓ 腳本生成完成，可以直接修改');
+        resultCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      } catch (e) {
+        setStatus(genStatus, 'error', '❌ 生成失敗：' + e.message);
+      } finally {
+        genBtn.disabled = false;
+        regenBtn.disabled = false;
+      }
+    }
+
+    outputEl.addEventListener('input', updateCount);
+
+    function updateCount() {
+      const lines = outputEl.value.trim().split('\n').filter(l => l.trim());
+      const chars = outputEl.value.replace(/\s/g, '').length;
+      charCount.textContent = `${lines.length} 句 · ${chars} 字`;
+    }
+
+    // 帶到腳本轉影片
+    goBtn.addEventListener('click', () => {
+      const script = outputEl.value.trim();
+      if (!script) return;
+      localStorage.setItem(HANDOFF_STORE, script);
+      window.location.href = 'script.html?from=aistudio';
+    });
+
+    function setStatus(el, type, msg) {
+      el.className = `status show ${type}`;
+      el.textContent = msg;
+    }
+  })();
+  </script>
+</body>
+</html>

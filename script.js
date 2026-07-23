@@ -3348,6 +3348,21 @@ void main(){
   // 專案還原:找到上次自動存檔就詢問是否繼續編輯
   (async () => {
     try {
+      // aistudio 交接:從 AI 懶人包製片帶過來的腳本
+      if (new URLSearchParams(location.search).get('from') === 'aistudio') {
+        const handoff = localStorage.getItem('aistudio-handoff');
+        if (handoff) {
+          localStorage.removeItem('aistudio-handoff');
+          await deleteProjectRecord();
+          scriptInput.value = handoff;
+          saveDraft();
+          const resultEl = $("split-result");
+          resultEl.textContent = '✅ 已載入 AI 生成腳本，請按「分析腳本」繼續';
+          resultEl.hidden = false;
+          return;
+        }
+      }
+
       const proj = await loadProjectRecord();
       if (!proj || !Array.isArray(proj.scenes) || !proj.scenes.length) return;
       const when = proj.savedAt ? new Date(proj.savedAt).toLocaleString("zh-TW") : "";
