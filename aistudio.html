@@ -199,6 +199,24 @@
     genBtn.addEventListener('click', generate);
     regenBtn.addEventListener('click', generate);
 
+    async function pickModel(key) {
+      const prefer = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro', 'gemini-1.0-pro'];
+      try {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+        if (r.ok) {
+          const d = await r.json();
+          const names = (d.models || [])
+            .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+            .map(m => m.name.replace('models/', ''));
+          for (const p of prefer) {
+            if (names.some(n => n.startsWith(p))) return names.find(n => n.startsWith(p));
+          }
+          if (names.length) return names[0];
+        }
+      } catch (_) {}
+      return 'gemini-2.0-flash';
+    }
+
     async function generate() {
       const key = apiKeyEl.value.trim() || localStorage.getItem(KEY_STORE) || '';
       if (!key) { setStatus(genStatus, 'error', '請先輸入並儲存 Gemini API Key ↑'); return; }
@@ -228,8 +246,12 @@
 主題：${topic}`;
 
       try {
+        // 自動偵測可用模型
+        const model = await pickModel(key);
+        setStatus(genStatus, 'loading', `⏳ 使用模型 ${model}，生成中…`);
+
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${key}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
